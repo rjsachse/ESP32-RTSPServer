@@ -5,7 +5,7 @@ const char* RTSPServer::LOG_TAG = "RTSPServer";
 RTSPServer::RTSPServer()
   : rtpFps(0),
     // User can change these settings
-    transport(VIDEO_ONLY), // Default transport 
+    transport(VIDEO_AND_SUBTITLES), // Default transport 
     sampleRate(0),
     rtspPort(554),
     rtpIp(IPAddress(239, 255, 0, 1)), // Default RTP IP 

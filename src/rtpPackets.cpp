@@ -139,7 +139,7 @@ void RTSPServer::sendRtpFrame(const uint8_t* data, size_t len, uint8_t quality, 
     
     // RTP header
     packet[4] = 0x80;
-    packet[5] = 0x1a | (isLastFragment ? 0x80 : 0x00);
+    packet[5] = 0x1A | (isLastFragment ? 0x80 : 0x00);
     packet[6] = (this->videoSequenceNumber >> 8) & 0xFF;
     packet[7] = this->videoSequenceNumber & 0xFF;
     packet[8] = (this->videoTimestamp >> 24) & 0xFF;
