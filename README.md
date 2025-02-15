@@ -23,7 +23,7 @@ ESP32-RTSPServer Library is for the ESP32, designed to stream video, audio, and 
 - **Audio Streaming**: Stream audio using I2S.
 - **Subtitles**: Stream subtitles alongside video and audio.
 - **Transport Types**: Supports multiple transport types, including video-only, audio-only, and combined streams.
-- **Protocols**: Stream multicast, unicast UDP & TCP (TCP is Slower).
+- **Protocols**: Stream multicast, unicast UDP, TCP and HTTP Tunnel (TCP and HTTP is Slower).
 
 ## Test Results with OV2460 on ESP32S3
 
@@ -239,14 +239,14 @@ bool init(TransportType transport = NONE, uint16_t rtspPort = 0, uint32_t sample
 ```
   - Description: Initializes the RTSP server with specified settings.
   - Parameters:
-    - `transport` (TransportType): Type of transport (default is NONE).
-    - `rtspPort` (uint16_t): Port number for the RTSP server (default is 0).
+    - `transport` (TransportType): Type of transport (default is VIDEO_AND_SUBTITLES).
+    - `rtspPort` (uint16_t): Port number for the RTSP server (default is 554).
     - `sampleRate` (uint32_t): Sample rate for audio streaming (default is 0).
-    - `port1` (uint16_t): Port number for video (default is 0).
-    - `port2` (uint16_t): Port number for audio (default is 0).
-    - `port3` (uint16_t): Port number for subtitles (default is 0).
-    - `rtpIp` (IPAddress): IP address for RTP (default is IPAddress()).
-    - `rtpTTL` (uint8_t): TTL for RTP (default is 255).
+    - `port1` (uint16_t): Port number for video (default is 5430).
+    - `port2` (uint16_t): Port number for audio (default is 5432).
+    - `port3` (uint16_t): Port number for subtitles (default is 5434).
+    - `rtpIp` (IPAddress): IP address for RTP (default is 239.255.0.1).
+    - `rtpTTL` (uint8_t): TTL for RTP (default is 1).
   - Returns: `bool` - `true` if the server initialized successfully, `false` otherwise.
 
 ```cpp
