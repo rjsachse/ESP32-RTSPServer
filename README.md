@@ -63,8 +63,9 @@ This library requires the ESP32 Arduino core by Espressif. Ensure you have at le
 ### Include the Library
 Basic Setup
 ```cpp
-
+#include "RTSPConfig.h" // Include a RTSPConfig.h file if want to change defined options
 #include <ESP32-RTSPServer.h>
+
 
 // Include all other libraries and setups eg Camera, Audio
 
@@ -74,12 +75,6 @@ RTSPServer rtspServer;
 // Can set a username and password for RTSP authentication or leave blank for no authentication
 const char *rtspUser = "";
 const char *rtspPassword = "";
-
-// User defined options
-//#define OVERRIDE_RTSP_SINGLE_CLIENT_MODE // Override the default behavior of allowing only one client for unicast or TCP
-//#define RTSP_VIDEO_NONBLOCK // Enable non-blocking video streaming by creating a separate task for video streaming, preventing it from blocking the main sketch.
-//#define RTSP_LOGGING_ENABLED //Also enable "Core Debug Level" to "Info" in Tools -> Core Debug Level to enable logging
-
 
 // Task handles
 TaskHandle_t videoTaskHandle = NULL; 
@@ -183,42 +178,41 @@ void loop() {
 }
    
 ```
+
 ## VLC Settings
-To change the delay open "Show more options" and change the "Caching"
 
-![Screenshot 2](extras/open.png)
-
-To turn on subtitles make sure "Track 1" is enables
-
-![Screenshot 3](extras/subtitles.png)
-
-Change RTSP settings
-
-![Screenshot 3](extras/pref.png)
-
-Click "Show settings All" bottom left
-
-![Screenshot 1](extras/advance.png)
-
-On the left open "Input / Codecs" then "Demuxes" then "RTP/RTSP" to enable TCP or Multicast
-
-![Screenshot 3](extras/rtsp.png)
+For detailed VLC settings, please refer to the [VLC Settings Guide](vlc.md).
 
 ## Optional Defines
 
-You can customize the behavior of the RTSPServer library by defining the following macros in your sketch:
+You can customize the behavior of the RTSPServer library by including a RTSPConfig.h in your sketch:
+
 ```cpp
-#define OVERRIDE_RTSP_SINGLE_CLIENT_MODE 
+// RTSPConfig.h
+#ifndef RTSP_CONFIG_H
+#define RTSP_CONFIG_H
+
+// Define ESP32_RTSP_LOGGING_ENABLED to enable logging
+//#define RTSP_LOGGING_ENABLED // save 7.7kb of flash
+
+// User defined options in sketch
+//#define OVERRIDE_RTSP_SINGLE_CLIENT_MODE // Override the default behavior of allowing only one client for unicast or TCP
+//#define RTSP_VIDEO_NONBLOCK // Enable non-blocking video streaming by creating a separate task for video streaming, preventing it from blocking the main sketch.
+
+#endif // RTSP_CONFIG_H
 ```
-  - Description: Override the default behavior of allowing only one client for unicast or TCP.
-```cpp
-#define RTSP_VIDEO_NONBLOCK
-```
-  - Description: Enable non-blocking video streaming. Creates a separate task for video streaming so it does not block the main sketch video task.
+  - Enable logging for debugging purposes. This will save 7.7KB of flash memory if disabled.
 ```cpp
 #define RTSP_LOGGING_ENABLED
 ```
-  - Description: Enable logging for debugging purposes. This will save 7.7KB of flash memory if disabled.
+  - Override the default behavior of allowing only one client for unicast or TCP.
+```cpp
+#define OVERRIDE_RTSP_SINGLE_CLIENT_MODE 
+```
+  - Enable non-blocking video streaming. Creates a separate task for video streaming so it does not block the main sketch video task.
+```cpp
+#define RTSP_VIDEO_NONBLOCK
+```
 
 ## API Reference
 
@@ -331,7 +325,7 @@ TransportType transport
 ```
   - Description: Type of transport. eg. VIDEO_ONLY
 ```cpp
-uint32_t sampleRate
+uint3232 sampleRate
 ```
   - Description: Sample rate for audio streaming.
 ```cpp

@@ -15,8 +15,12 @@
 
 #define RTSP_BUFFER_SIZE 8092
 
-// Define ESP32_RTSP_LOGGING_ENABLED to enable logging
-//#define RTSP_LOGGING_ENABLED // save 7.7kb of flash
+// Optionally include RTSPConfig.h if available
+#ifdef __has_include
+  #if __has_include("RTSPConfig.h")
+    #include "RTSPConfig.h"
+  #endif
+#endif
 
 #ifdef RTSP_LOGGING_ENABLED
   #define RTSP_LOGI(tag, format, ...) ESP_LOGI(tag, format, ##__VA_ARGS__)
@@ -30,9 +34,6 @@
   #define RTSP_LOGD(tag, format, ...)
 #endif
 
-// User defined options in sketch
-//#define OVERRIDE_RTSP_SINGLE_CLIENT_MODE // Override the default behavior of allowing only one client for unicast or TCP
-//#define RTSP_VIDEO_NONBLOCK // Enable non-blocking video streaming by creating a separate task for video streaming, preventing it from blocking the main sketch.
 #define MAX_COOKIE_LENGTH 128 // max length of session cookie
 
 struct RTSP_Session {
