@@ -120,30 +120,65 @@ uint32_t RTSPServer::generateSessionID() {
   return esp_random();
 }
 
+// uint32_t RTSPServer::extractSessionID(char* request) {
+//   char* sessionStr = strstr(request, "Session: ");
+//   if (sessionStr == NULL) {
+//     return 0;
+//   }
+//   sessionStr += 9;
+//   char* endOfLine = strchr(sessionStr, '\n');
+//   if (endOfLine) {
+//     *endOfLine = 0;
+//   }
+
+//   while (isspace(*sessionStr)) sessionStr++;
+//   char* end = sessionStr + strlen(sessionStr) - 1;
+//   while (end > sessionStr && isspace(*end)) end--;
+//   *(end + 1) = 0;
+
+//   uint32_t sessionID = strtoul(sessionStr, NULL, 10);
+
+//   if (endOfLine) {
+//     *endOfLine = '\n';
+//   }
+
+//   return sessionID;
+// }
+
 uint32_t RTSPServer::extractSessionID(char* request) {
   char* sessionStr = strstr(request, "Session: ");
   if (sessionStr == NULL) {
-    return 0;
+      return 0;
   }
-  sessionStr += 9;
+  sessionStr += 9; // Skip "Session: "
   char* endOfLine = strchr(sessionStr, '\n');
-  if (endOfLine) {
-    *endOfLine = 0;
-  }
-
-  while (isspace(*sessionStr)) sessionStr++;
-  char* end = sessionStr + strlen(sessionStr) - 1;
-  while (end > sessionStr && isspace(*end)) end--;
-  *(end + 1) = 0;
-
-  uint32_t sessionID = strtoul(sessionStr, NULL, 10);
+  char sessionCopy[64]; // Temporary buffer to store the session string
 
   if (endOfLine) {
-    *endOfLine = '\n';
+      size_t length = endOfLine - sessionStr;
+      if (length >= sizeof(sessionCopy)) {
+          length = sizeof(sessionCopy) - 1;
+      }
+      strncpy(sessionCopy, sessionStr, length);
+      sessionCopy[length] = '\0'; // Null-terminate the copied session string
+  } else {
+      strncpy(sessionCopy, sessionStr, sizeof(sessionCopy) - 1);
+      sessionCopy[sizeof(sessionCopy) - 1] = '\0'; // Null-terminate
   }
+
+  // Trim spaces in the copied session string
+  char* start = sessionCopy;
+  while (isspace(*start)) start++;
+  char* end = start + strlen(start) - 1;
+  while (end > start && isspace(*end)) end--;
+  *(end + 1) = '\0';
+
+  // Convert the trimmed session string to an integer
+  uint32_t sessionID = strtoul(start, NULL, 10);
 
   return sessionID;
 }
+
 
 const char* RTSPServer::dateHeader() {
   static char buffer[50];

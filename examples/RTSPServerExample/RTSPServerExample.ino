@@ -1,6 +1,7 @@
 #include <WiFi.h>
 #include <ESP32-RTSPServer.h>
 #include "esp_camera.h"
+#include "audioConverter.h"
 
 // ===================
 // Select camera model
@@ -207,6 +208,13 @@ void sendAudio(void* pvParameters) {
   }
 }
 
+// Callback function to handle received audio
+void receivedAudio(const int16_t* l16Data, size_t len) {
+  // Example: Play received audio (implement your playback logic here)
+  Serial.printf("Received audio data of length: %d\n", len);
+  // Add code to send l16Data to a speaker or other output device
+}
+
 #endif
 
 /** 
@@ -324,14 +332,17 @@ void setup() {
   if (setupMic()) {
     Serial.println("Microphone Setup Complete");
     // Create tasks for sending audio
-    xTaskCreate(sendAudio, "Audio", 8192, NULL, 8, &audioTaskHandle);
+    xTaskCreate(sendAudio, "Audio", 12288, NULL, 8, &audioTaskHandle); // Increased stack size
   } else {
     Serial.println("Mic Setup Failed!");
   }
+
+  // Pass the callback to the RTSP server for handling received audio
+  rtspServer.setAudioReceiveCallback(receivedAudio);
 #endif
 
   // Create tasks for sending video, and subtitles
-  xTaskCreate(sendVideo, "Video", 8192, NULL, 9, &videoTaskHandle);
+  xTaskCreate(sendVideo, "Video", 12288, NULL, 9, &videoTaskHandle); // Increased stack size
   
   // You can use a task to send subtitles every second
   //xTaskCreate(sendSubtitles, "Subtitles", 2560, NULL, 7, &subtitlesTaskHandle);

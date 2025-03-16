@@ -7,7 +7,7 @@
 #include <map>
 
 #define MAX_RTSP_BUFFER (512 * 1024)
-#define RTP_STACK_SIZE (1024 * 4)
+#define RTP_STACK_SIZE (1024 * 8)
 #define RTP_PRI 10
 #define RTSP_STACK_SIZE (1024 * 8)
 #define RTSP_PRI 10
@@ -49,6 +49,7 @@ struct RTSP_Session {
   bool isHttp;  // Add flag for HTTP tunneling
   int httpSock;  // Add HTTP socket storage
   char sessionCookie[MAX_COOKIE_LENGTH];  // Add storage for session cookie
+  uint16_t cAudioIPort;  // Add client port for incoming audio
 };
 
 class RTSPServer {
@@ -89,6 +90,9 @@ public:
 
   bool setCredentials(const char* username, const char* password); // Add method to set credentials
 
+  // Function to set the callback for received audio
+  void setAudioReceiveCallback(void (*callback)(const int16_t*, size_t));
+
   uint32_t rtpFps;
   TransportType transport;
   uint32_t sampleRate;
@@ -97,6 +101,7 @@ public:
   uint8_t rtpTTL;
   uint16_t rtpVideoPort;
   uint16_t rtpAudioPort;
+  uint16_t rtpAudioIPort;
   uint16_t rtpSubtitlesPort;
   uint8_t maxRTSPClients;
 
@@ -104,14 +109,17 @@ private:
   int rtspSocket;
   int videoUnicastSocket; 
   int audioUnicastSocket; 
+  int audioIUnicastSocket; 
   int subtitlesUnicastSocket; 
   int videoMulticastSocket; 
   int audioMulticastSocket; 
+  int audioIMulticastSocket;  // Add socket for incoming audio (multicast)
   int subtitlesMulticastSocket;
   uint8_t activeRTSPClients; 
   uint8_t maxClients;
   TaskHandle_t rtpVideoTaskHandle;
   TaskHandle_t rtspTaskHandle;
+  TaskHandle_t rtpAudioITaskHandle;  // Add task handle for incoming audio
   std::map<uint32_t, RTSP_Session> sessions;
   byte* rtspStreamBuffer;
   size_t rtspStreamBufferSize;
@@ -134,6 +142,7 @@ private:
   uint32_t lastRtpFPSUpdateTime;
   uint8_t videoCh;
   uint8_t audioCh;
+  uint8_t audioICh;  // Add channel for incoming audio
   uint8_t subtitlesCh;
   bool isVideo;
   bool isAudio;
@@ -164,6 +173,9 @@ private:
   static void rtpVideoTaskWrapper(void* pvParameters);  // Defined in rtp.cpp
 
   void rtpVideoTask();  // Defined in rtp.cpp
+
+  static void rtpAudioITaskWrapper(void* pvParameters);  // Add wrapper for incoming audio task
+  void rtpAudioITask();  // Add method for incoming audio task
 
   void setMaxClients(uint8_t newMaxClients);  // Defined in utils.cpp
 
@@ -222,6 +234,11 @@ private:
   bool decodeBase64(const char* input, size_t inputLen, char* output, size_t* outputLen);
   void wrapInHTTP(char* buffer, size_t len, char* response, size_t maxLen);  // Add this line
   RTSP_Session* findSessionByCookie(const char* cookie);  // Add this line
+
+  void logRawAudioData(const uint8_t* data, size_t length);
+
+  void (*audioReceiveCallback)(const int16_t*, size_t) = nullptr; // Callback for received audio
+
 };
 
 #endif // ESP32_RTSP_SERVER_H

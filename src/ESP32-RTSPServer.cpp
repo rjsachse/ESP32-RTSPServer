@@ -1,4 +1,5 @@
 #include "ESP32-RTSPServer.h"
+#include "audioConverter.h"
 
 const char* RTSPServer::LOG_TAG = "RTSPServer";
 
@@ -12,12 +13,14 @@ RTSPServer::RTSPServer()
     rtpTTL(64), // Default TTL
     rtpVideoPort(5430),
     rtpAudioPort(5432),
+    rtpAudioIPort(5436),
     rtpSubtitlesPort(5434),
     maxRTSPClients(3),
     //
     rtspSocket(-1),
     videoUnicastSocket(-1),
     audioUnicastSocket(-1), 
+    audioIUnicastSocket(-1), 
     subtitlesUnicastSocket(-1),
     videoMulticastSocket(-1),
     audioMulticastSocket(-1),
@@ -26,6 +29,7 @@ RTSPServer::RTSPServer()
     maxClients(1),
     rtpVideoTaskHandle(NULL),
     rtspTaskHandle(NULL),
+    rtpAudioITaskHandle(NULL), // Reordered initialization
     rtspStreamBuffer(NULL),
     rtspStreamBufferSize(0),
     rtpFrameSent(true),
@@ -44,6 +48,7 @@ RTSPServer::RTSPServer()
     lastRtpFPSUpdateTime(0),
     videoCh(0),
     audioCh(0),
+    audioICh(0),
     subtitlesCh(0),
     isVideo(false),
     isAudio(false),
@@ -52,7 +57,7 @@ RTSPServer::RTSPServer()
     firstClientConnected(false),
     firstClientIsMulticast(false),
     firstClientIsTCP(false),
-    authEnabled(false) // Initialize authEnabled to false
+    authEnabled(false) // Reordered initialization
 {
     isPlayingMutex = xSemaphoreCreateMutex(); // Initialize the mutex
     sendTcpMutex = xSemaphoreCreateMutex(); // Initialize the mutex
@@ -146,6 +151,10 @@ void RTSPServer::deinit() {
   if (this->rtpVideoTaskHandle != NULL) {
     vTaskDelete(this->rtpVideoTaskHandle);
     this->rtpVideoTaskHandle = NULL;
+  }
+  if (this->rtpAudioITaskHandle != NULL) {
+    vTaskDelete(this->rtpAudioITaskHandle);
+    this->rtpAudioITaskHandle = NULL;
   }
   if (this->rtspSocket >= 0) {
     close(this->rtspSocket);
@@ -360,4 +369,67 @@ void RTSPServer::rtspTask() {
       }
     }
   }
+}
+
+void RTSPServer::rtpAudioITaskWrapper(void* pvParameters) {
+  RTSPServer* server = static_cast<RTSPServer*>(pvParameters);
+  server->rtpAudioITask();
+}
+
+void RTSPServer::logRawAudioData(const uint8_t* data, size_t length) {
+  char logBuffer[1024]; // Adjust size as needed
+  size_t index = 0;
+
+  for (size_t i = 0; i < length && index < sizeof(logBuffer) - 3; i++) {
+      index += snprintf(logBuffer + index, sizeof(logBuffer) - index, "%02X ", data[i]);
+  }
+
+  logBuffer[index] = '\0'; // Null-terminate the string
+  RTSP_LOGI(LOG_TAG, "Audio Data (Hex): %s", logBuffer);
+}
+
+void RTSPServer::rtpAudioITask() {
+  uint8_t* buffer = (uint8_t*)malloc(1500); // Allocate buffer on the heap
+  int16_t* l16Data = (int16_t*)malloc(2560 * sizeof(int16_t)); // Allocate l16Data on the heap
+  size_t l16Len = 0;
+
+  if (!buffer || !l16Data) {
+    RTSP_LOGE(LOG_TAG, "Failed to allocate memory for RTP audio task");
+    if (buffer) free(buffer);
+    if (l16Data) free(l16Data);
+    vTaskDelete(NULL); // Terminate the task
+    return;
+  }
+
+  struct sockaddr_in srcAddr;
+  socklen_t addrLen = sizeof(srcAddr);
+
+  while (true) {
+    int len = recvfrom(this->audioIUnicastSocket, buffer, 1500, 0, (struct sockaddr*)&srcAddr, &addrLen);
+    if (len > 0) {
+      const int rtpHeaderSize = 12; // RTP header size
+      if (len > rtpHeaderSize) {
+        uint8_t* payload = buffer + rtpHeaderSize;
+        int payloadLen = len - rtpHeaderSize;
+
+        convertG711ToL16Upsampled(payload, payloadLen, l16Data, &l16Len);
+        if (this->audioReceiveCallback) {
+          sendReceivedAudioToMain(l16Data, l16Len, this->audioReceiveCallback);
+        } else {
+          RTSP_LOGE(LOG_TAG, "audioReceiveCallback is null");
+        }
+      } else {
+        RTSP_LOGE(LOG_TAG, "Received packet too small to contain RTP header");
+      }
+    } else {
+      vTaskDelay(10 / portTICK_PERIOD_MS);  // Delay to prevent busy loop
+    }
+  }
+
+  free(buffer);
+  free(l16Data);
+}
+
+void RTSPServer::setAudioReceiveCallback(void (*callback)(const int16_t*, size_t)) {
+  this->audioReceiveCallback = callback;
 }

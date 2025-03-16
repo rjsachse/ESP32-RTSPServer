@@ -73,18 +73,17 @@ void RTSPServer::handleDescribe(const RTSP_Session& session) {
                        "a=control:video\r\n");
   }
 
-  const char* mediaCondition = "sendrecv"; 
-  // if (haveMic && haveAmp) mediaCondition = "sendrecv"; 
-  // else if (haveMic) mediaCondition = "sendonly"; 
-  // else if (haveAmp) mediaCondition = "recvonly"; 
-  // else mediaCondition = "inactive"; 
-
   if (isAudio) {
     sdpLen += snprintf(sdpDescription + sdpLen, sizeof(sdpDescription) - sdpLen,
                        "m=audio 0 RTP/AVP 97\r\n"
                        "a=rtpmap:97 L16/%lu/1\r\n"
-                       "a=control:audio\r\n"
-                       "a=%s\r\n", sampleRate, mediaCondition);
+                       "a=control:audio-out\r\n"
+                       "a=%s\r\n"
+                       //"m=audio 5000 RTP/AVP 0\r\n"
+                       "m=audio 0 RTP/AVP 0\r\n"
+                       "a=rtpmap:0 PCMU/8000/1\r\n"
+                       "a=control:audio-in\r\n"
+                       "a=%s\r\n", sampleRate, "recvonly", "sendonly");
   }
 
   if (isSubtitles) {
@@ -151,7 +150,8 @@ void RTSPServer::handleSetup(char* request, RTSP_Session& session) {
 #endif
 
   bool setVideo = strstr(request, "video") != NULL;
-  bool setAudio = strstr(request, "audio") != NULL;
+  bool setAudioO = strstr(request, "audio-out") != NULL;
+  bool setAudioI = strstr(request, "audio-in") != NULL;
   bool setSubtitles = strstr(request, "subtitles") != NULL;
   uint16_t clientPort = 0;
   uint16_t serverPort = 0;
@@ -204,7 +204,7 @@ void RTSPServer::handleSetup(char* request, RTSP_Session& session) {
     }
   }
   
-  if (setAudio) {
+  if (setAudioO) {
     session.cAudioPort = clientPort;
     serverPort = this->rtpAudioPort;
     this->audioCh = rtpChannel;
@@ -216,7 +216,24 @@ void RTSPServer::handleSetup(char* request, RTSP_Session& session) {
       }
     }
   }
-  
+
+  if (setAudioI) {
+    session.cAudioIPort = clientPort;
+    serverPort = this->rtpAudioIPort;
+    this->audioICh = rtpChannel;
+    if (!session.isTCP) {
+      if (session.isMulticast) {
+        this->checkAndSetupUDP(this->audioIMulticastSocket, true, serverPort, this->rtpIp);
+      } else {
+        this->checkAndSetupUDP(this->audioIUnicastSocket, false, serverPort, this->rtpIp);
+      }
+    }
+    // Create the task to handle incoming audio
+    if (this->rtpAudioITaskHandle == NULL) {
+      xTaskCreate(rtpAudioITaskWrapper, "rtpAudioITask", RTP_STACK_SIZE, this, RTP_PRI, &this->rtpAudioITaskHandle);
+    }
+  }
+
   if (setSubtitles) {
     session.cSrtPort = clientPort;
     serverPort = this->rtpSubtitlesPort;
@@ -555,7 +572,6 @@ void RTSPServer::handleRTSPCommand(char* command, RTSP_Session& session) {
     RTSP_LOGD(LOG_TAG, "Handle RTSP Describe");
     handleDescribe(session);
   } else if (strncmp(command, "SETUP", 5) == 0) {
-    RTSP_LOGD(LOG_TAG, "Handle RTSP Setup");
     handleSetup(command, session);
   } else if (strncmp(command, "PLAY", 4) == 0) {
     RTSP_LOGD(LOG_TAG, "Handle RTSP Play");
