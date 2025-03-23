@@ -5,6 +5,7 @@
 #include "lwip/sockets.h"
 #include <esp_log.h>
 #include <map>
+#include <ESP32-SpeexDSP.h>
 
 #define MAX_RTSP_BUFFER (512 * 1024)
 #define RTP_STACK_SIZE (1024 * 8)
@@ -104,6 +105,7 @@ public:
   uint16_t rtpAudioIPort;
   uint16_t rtpSubtitlesPort;
   uint8_t maxRTSPClients;
+  ESP32SpeexDSP& getAudioProcessor() { return audioProcessor; } // Make public for access to audio processor
 
 private:
   int rtspSocket;
@@ -235,7 +237,10 @@ private:
   void wrapInHTTP(char* buffer, size_t len, char* response, size_t maxLen);  // Add this line
   RTSP_Session* findSessionByCookie(const char* cookie);  // Add this line
 
+  ESP32SpeexDSP audioProcessor; // SpeexDSP instance for audio processing
   void logRawAudioData(const uint8_t* data, size_t length);
+  
+  void sendReceivedAudioToMain(const int16_t* l16Data, size_t len, void (*callback)(const int16_t*, size_t));
 
   void (*audioReceiveCallback)(const int16_t*, size_t) = nullptr; // Callback for received audio
 

@@ -67,13 +67,3 @@ void convertG711ToL16Upsampled(const uint8_t* g711Data, size_t g711Len, int16_t*
     // Update the output length to reflect the upsampled data
     *l16Len = outputIndex;
 }
-
-// Function to send received audio to the main sketch
-void sendReceivedAudioToMain(const int16_t* l16Data, size_t len, void (*callback)(const int16_t*, size_t)) {
-    if (callback) {
-        callback(l16Data, len);
-    } else {
-        // Log an error if the callback is null
-        //Serial.println("Error: Audio callback is null");
-    }
-}
