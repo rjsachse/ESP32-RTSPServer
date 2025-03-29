@@ -1,5 +1,5 @@
 #include "ESP32-RTSPServer.h"
-#include "audioConverter.h"
+//#include "audioConverter.h"
 
 const char* RTSPServer::LOG_TAG = "RTSPServer";
 
@@ -406,145 +406,9 @@ void RTSPServer::logRawAudioData(const uint8_t* data, size_t length) {
   RTSP_LOGI(LOG_TAG, "Audio Data (Hex): %s", logBuffer);
 }
 
-// void RTSPServer::rtpAudioITask() {
-//   uint8_t* buffer = (uint8_t*)malloc(1500); // Allocate buffer on the heap
-//   int16_t* l16Data = (int16_t*)malloc(2560 * sizeof(int16_t)); // Allocate l16Data on the heap
-//   size_t l16Len = 0;
-
-//   if (!buffer || !l16Data) {
-//     RTSP_LOGE(LOG_TAG, "Failed to allocate memory for RTP audio task");
-//     if (buffer) free(buffer);
-//     if (l16Data) free(l16Data);
-//     vTaskDelete(NULL); // Terminate the task
-//     return;
-//   }
-
-//   struct sockaddr_in srcAddr;
-//   socklen_t addrLen = sizeof(srcAddr);
-
-//   while (true) {
-//     int len = recvfrom(this->audioIUnicastSocket, buffer, 1500, 0, (struct sockaddr*)&srcAddr, &addrLen);
-//     if (len > 0) {
-//       const int rtpHeaderSize = 12; // RTP header size
-//       if (len > rtpHeaderSize) {
-//         uint8_t* payload = buffer + rtpHeaderSize;
-//         int payloadLen = len - rtpHeaderSize;
-
-//         convertG711ToL16Upsampled(payload, payloadLen, l16Data, &l16Len);
-//         if (this->audioReceiveCallback) {
-//           sendReceivedAudioToMain(l16Data, l16Len, this->audioReceiveCallback);
-//         } else {
-//           RTSP_LOGE(LOG_TAG, "audioReceiveCallback is null");
-//         }
-//       } else {
-//         RTSP_LOGE(LOG_TAG, "Received packet too small to contain RTP header");
-//       }
-//     } else {
-//       vTaskDelay(10 / portTICK_PERIOD_MS);  // Delay to prevent busy loop
-//     }
-//   }
-
-//   free(buffer);
-//   free(l16Data);
-// }
-
-
-//void RTSPServer::rtpAudioITask() {
-//  uint8_t* rtpBuffer = (uint8_t*)malloc(1500);
-//  int16_t* micBuffer = (int16_t*)malloc(256 * sizeof(int16_t));
-//  int16_t* processedBuffer = (int16_t*)malloc(256 * sizeof(int16_t));
-
-//  if (!rtpBuffer || !micBuffer || !processedBuffer) {
-//      RTSP_LOGE(LOG_TAG, "Failed to allocate memory");
-//      free(rtpBuffer);
-//      free(micBuffer);
-//      free(processedBuffer);
-//      vTaskDelete(NULL);
-//      return;
-//  }
-
-//  struct sockaddr_in srcAddr;
-//  socklen_t addrLen = sizeof(srcAddr);
-
-//  while (true) {
-//      int len = recvfrom(this->audioIUnicastSocket, rtpBuffer, 1500, 0, (struct sockaddr*)&srcAddr, &addrLen);
-//      if (len > 0) {
-//          Serial.printf("Raw RTP Packet: %d bytes\n", len);
-
-//          ESP32SpeexDSP::RTPPacket rtp;
-//          if (audioProcessor.parseRTPPacket(rtpBuffer, len, rtp)) {
-//              Serial.printf("RTP Payload: %d bytes\n", rtp.payloadLen);
-
-//              int16_t* pcm8k = (int16_t*)malloc(rtp.payloadLen * sizeof(int16_t));
-//              audioProcessor.decodeG711(rtp.payload, pcm8k, rtp.payloadLen, true);
-//              Serial.printf("PCM 8k: %d samples (%d bytes)\n", rtp.payloadLen, rtp.payloadLen * 2);
-
-//              int16_t* pcm16k = (int16_t*)malloc(rtp.payloadLen * 2 * sizeof(int16_t));
-//              int resampledLen = audioProcessor.resample(pcm8k, rtp.payloadLen, pcm16k, rtp.payloadLen * 2);
-//              Serial.printf("Resampled 16k: %d samples (%d bytes)\n", resampledLen, resampledLen * 2);
-
-//              for (int i = 0; i < resampledLen; i += 256) {
-//                int chunkSize = min(256, resampledLen - i);
-//                memcpy(processedBuffer, pcm16k + i, chunkSize * sizeof(int16_t));
-//                Serial.printf("Sending Chunk: %d samples\n", chunkSize);
-
-                // Get speaker data from ring buffer
-//                int micSamples = audioProcessor.readBuffer(micBuffer, 256);
-//                if (micSamples < 256) {
-//                    memset(micBuffer + micSamples, 0, (256 - micSamples) * sizeof(int16_t));
-//                }
-//                Serial.printf("Mic Buffer: %d samples\n", micSamples);
-
-                // Apply AEC
-//                audioProcessor.processAEC(processedBuffer, micBuffer, processedBuffer);
-
-//                if (this->audioReceiveCallback) {
-//                    sendReceivedAudioToMain(processedBuffer, chunkSize, this->audioReceiveCallback);
-//                }
-//            }
-
-              // for (int i = 0; i < resampledLen; i += 256) {
-              //     int chunkSize = min(256, resampledLen - i);
-              //     Serial.printf("Jitter Chunk: %d samples\n", chunkSize);
-              //     audioProcessor.putJitterPacket(pcm16k + i, chunkSize, rtp.timestamp);
-              // }
-
-              // int jitterOutSamples = audioProcessor.getJitterPacket(processedBuffer, 256);
-              // while (jitterOutSamples > 0) {
-              //     Serial.printf("Jitter Out: %d samples\n", jitterOutSamples);
-              //     int micSamples = audioProcessor.readBuffer(micBuffer, 256);
-              //     if (micSamples < 256) {
-              //         memset(micBuffer + micSamples, 0, (256 - micSamples) * sizeof(int16_t));
-              //     }
-
-              //     audioProcessor.processAEC(processedBuffer, micBuffer, processedBuffer);
-              //     audioProcessor.preprocessAudio(processedBuffer);
-
-              //     if (this->audioReceiveCallback) {
-              //         sendReceivedAudioToMain(processedBuffer, jitterOutSamples, this->audioReceiveCallback);
-              //     }
-
-              //     jitterOutSamples = audioProcessor.getJitterPacket(processedBuffer, 256);
-              // }
-
-//              free(pcm8k);
-//              free(pcm16k);
-//          } else {
-//              RTSP_LOGE(LOG_TAG, "Failed to parse RTP packet");
-//          }
-//      } else {
-//          vTaskDelay(10 / portTICK_PERIOD_MS);
-//      }
-//  }
-
-//  free(rtpBuffer);
-//  free(micBuffer);
-//  free(processedBuffer);
-/}
-
 void RTSPServer::rtpAudioITask() {
-  uint8_t* rtpBuffer = (uint8_t*)malloc(1500);
-  int16_t* processedBuffer = (int16_t*)malloc(256 * sizeof(int16_t));
+  uint8_t* rtpBuffer = (uint8_t*)malloc(1500);           // Buffer for incoming RTP packets
+  int16_t* processedBuffer = (int16_t*)malloc(256 * sizeof(int16_t)); // Buffer for processed audio
 
   if (!rtpBuffer || !processedBuffer) {
     RTSP_LOGE(LOG_TAG, "Failed to allocate memory");
@@ -562,23 +426,24 @@ void RTSPServer::rtpAudioITask() {
       ESP32SpeexDSP::RTPPacket rtp;
       if (audioProcessor.parseRTPPacket(rtpBuffer, len, rtp)) {
         int16_t* pcm8k = (int16_t*)malloc(rtp.payloadLen * sizeof(int16_t));
-        audioProcessor.decodeG711(rtp.payload, pcm8k, rtp.payloadLen, true);
+        audioProcessor.decodeG711(rtp.payload, pcm8k, rtp.payloadLen, true); // Decode G.711 to PCM (μ-law)
         int16_t* pcm16k = (int16_t*)malloc(rtp.payloadLen * 2 * sizeof(int16_t));
-        int resampledLen = audioProcessor.resample(pcm8k, rtp.payloadLen, pcm16k, rtp.payloadLen * 2);
+        int resampledLen = audioProcessor.resample(pcm8k, rtp.payloadLen, pcm16k, rtp.payloadLen * 2); // Resample to 16 kHz
 
         for (int i = 0; i < resampledLen; i += 256) {
-          int chunkSize = min(256, resampledLen - i);
+          int chunkSize = min(256, resampledLen - i); // chunkSize in samples
           memcpy(processedBuffer, pcm16k + i, chunkSize * sizeof(int16_t));
 
-          // Speaker-specific preprocessing (optional)
-          audioProcessor.preprocessSpeakerAudio(processedBuffer); // NS/AGC if enabled
+          // Speaker-specific preprocessing (NS/AGC if enabled)
+          audioProcessor.preprocessSpeakerAudio(processedBuffer);
 
           // Store for AEC reference
           audioProcessor.writeBuffer(processedBuffer, chunkSize);
 
-          // Send to speaker
+          // Send to speaker as uint8_t* with length in bytes
           if (this->audioReceiveCallback) {
-            sendReceivedAudioToMain(processedBuffer, chunkSize, this->audioReceiveCallback);
+            size_t byteLen = chunkSize * sizeof(int16_t); // Convert samples to bytes
+            sendReceivedAudioToMain((uint8_t*)processedBuffer, byteLen, this->audioReceiveCallback);
           }
         }
         free(pcm8k);
@@ -594,11 +459,11 @@ void RTSPServer::rtpAudioITask() {
   free(processedBuffer);
 }
 
-void RTSPServer::setAudioReceiveCallback(void (*callback)(const int16_t*, size_t)) {
+void RTSPServer::setAudioReceiveCallback(void (*callback)(const uint8_t*, size_t)) {
     this->audioReceiveCallback = callback;
 }
 
-void RTSPServer::sendReceivedAudioToMain(const int16_t* l16Data, size_t len, void (*callback)(const int16_t*, size_t)) {
+void RTSPServer::sendReceivedAudioToMain(const uint8_t* l16Data, size_t len, void (*callback)(const uint8_t*, size_t)) {
     if (callback) {
         callback(l16Data, len);
     }

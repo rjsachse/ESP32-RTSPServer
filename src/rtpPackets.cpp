@@ -94,45 +94,75 @@ void RTSPServer::sendRTSPFrame(const uint8_t* data, size_t len, int quality, int
 //  this->rtpAudioSent = true;
 //}
 
+// void RTSPServer::sendRTSPAudio(int16_t* data, size_t len) {
+//   // len = 1024 bytes (512 samples at 16-bit)
+//   size_t numSamples = len / sizeof(int16_t); // Convert bytes to samples
+//   size_t chunkSize = 256; // Fixed chunk size in samples (512 bytes)
+
+//   for (size_t i = 0; i < numSamples; i += chunkSize) {
+//     chunkSize = std::min(static_cast<size_t>(256), numSamples - i); // Adjust for last chunk
+
+// #ifdef SPEEXDSP
+//     int16_t out[256];
+//     int16_t speaker[256];
+
+//     // Speaker reference for AEC
+//     int speakerSamples = audioProcessor.readBuffer(speaker, 256);
+//     if (speakerSamples < 256) {
+//       memset(speaker + speakerSamples, 0, (256 - speakerSamples) * sizeof(int16_t));
+//     }
+
+//     // AEC + Mic-specific preprocessing
+//     audioProcessor.processAEC(data + i, speaker, out);
+//     audioProcessor.preprocessMicAudio(out); // NS/AGC/VAD for mic only
+
+//     // Optional VAD for bandwidth (disabled by default with || true)
+//     if (audioProcessor.isMicVoiceDetected() || true) {
+// #else
+//     // No processing, use raw data directly
+//     int16_t* out = data + i;
+// #endif
+
+//     this->rtpAudioSent = false;
+//     bool multicastSent = false;
+//     for (const auto& sessionPair : this->sessions) {
+//       const RTSP_Session& session = sessionPair.second;
+//       if (session.isPlaying) {
+//         if (session.isMulticast) {
+//           if (!multicastSent) {
+//             this->sendRtpAudio(out, chunkSize, session.sock, this->rtpAudioPort, false, true);
+//             multicastSent = true;
+//           }
+//         } else {
+//           this->sendRtpAudio(out, chunkSize, session.isHttp ? session.httpSock : session.sock, session.cAudioPort, session.isTCP, false);
+//         }
+//       }
+//     }
+//     this->rtpAudioSent = true;
+
+// #ifdef SPEEXDSP
+//     } // End of VAD if block
+// #endif
+//   }
+// }
+
 void RTSPServer::sendRTSPAudio(int16_t* data, size_t len) {
-  int16_t out[256];
-  int16_t speaker[256];
-
-  // len = 1024 bytes (512 samples at 16-bit)
-  size_t numSamples = len / sizeof(int16_t); // Convert bytes to samples
-  for (size_t i = 0; i < numSamples; i += 256) {
-    int chunkSize = min(256, numSamples - i); // chunkSize in samples
-
-    // Speaker reference for AEC
-    int speakerSamples = audioProcessor.readBuffer(speaker, 256);
-    if (speakerSamples < 256) {
-      memset(speaker + speakerSamples, 0, (256 - speakerSamples) * sizeof(int16_t));
-    }
-
-    // AEC + Mic-specific preprocessing
-    audioProcessor.processAEC(data + i, speaker, out);
-    audioProcessor.preprocessMicAudio(out); // NS/AGC/VAD for mic only
-
-    // Optional VAD for bandwidth
-    if (audioProcessor.isMicVoiceDetected() || true) { // Remove "|| true" to use VAD
-      this->rtpAudioSent = false;
-      bool multicastSent = false;
-      for (const auto& sessionPair : this->sessions) {
-        const RTSP_Session& session = sessionPair.second;
-        if (session.isPlaying) {
-          if (session.isMulticast) {
-            if (!multicastSent) {
-              this->sendRtpAudio(out, chunkSize, session.sock, this->rtpAudioPort, false, true);
-              multicastSent = true;
-            }
-          } else {
-            this->sendRtpAudio(out, chunkSize, session.isHttp ? session.httpSock : session.sock, session.cAudioPort, session.isTCP, false);
-          }
+  this->rtpAudioSent = false;
+  bool multicastSent = false;
+  for (const auto& sessionPair : this->sessions) {
+    const RTSP_Session& session = sessionPair.second; 
+    if (session.isPlaying) {
+      if (session.isMulticast) {
+        if (!multicastSent) {
+          this->sendRtpAudio(data, len, session.sock, this->rtpAudioPort, false, true);
+          multicastSent = true;
         }
+      } else {
+        this->sendRtpAudio(data, len,  session.isHttp ? session.httpSock : session.sock, session.cAudioPort, session.isTCP, false);
       }
-      this->rtpAudioSent = true;
     }
   }
+  this->rtpAudioSent = true;
 }
 
 void RTSPServer::sendRTSPSubtitles(char* data, size_t len) {
