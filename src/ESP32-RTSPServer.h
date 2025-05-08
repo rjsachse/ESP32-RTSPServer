@@ -7,7 +7,7 @@
 #include <map>
 
 #define MAX_RTSP_BUFFER (512 * 1024)
-#define RTP_STACK_SIZE (1024 * 4)
+#define RTP_STACK_SIZE (1024 * 8)
 #define RTP_PRI 10
 #define RTSP_STACK_SIZE (1024 * 8)
 #define RTSP_PRI 10
