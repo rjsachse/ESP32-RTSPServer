@@ -74,16 +74,26 @@ void RTSPServer::handleDescribe(const RTSP_Session& session) {
   }
 
   if (isAudio) {
+    const char* outCodecStr = (audioOutCodec == G711_ULAW) ? "PCMU" : 
+                             (audioOutCodec == G711_ALAW) ? "PCMA" : "L16";
+    int outPayloadType = (audioOutCodec == G711_ULAW) ? 0 : 
+                        (audioOutCodec == G711_ALAW) ? 8 : 97;
+    const char* inCodecStr = (audioInCodec == G711_ULAW) ? "PCMU" : 
+                            (audioInCodec == G711_ALAW) ? "PCMA" : "L16";
+    int inPayloadType = (audioInCodec == G711_ULAW) ? 0 : 
+                       (audioInCodec == G711_ALAW) ? 8 : 97;
+
     sdpLen += snprintf(sdpDescription + sdpLen, sizeof(sdpDescription) - sdpLen,
-                       "m=audio 0 RTP/AVP 97\r\n"
-                       "a=rtpmap:97 L16/%lu/1\r\n"
+                       "m=audio 0 RTP/AVP %d\r\n"
+                       "a=rtpmap:%d %s/%lu/1\r\n"
                        "a=control:audio-out\r\n"
-                       "a=%s\r\n"
-                       //"m=audio 5000 RTP/AVP 0\r\n"
-                       "m=audio 0 RTP/AVP 0\r\n"
-                       "a=rtpmap:0 PCMU/8000/1\r\n"
+                       "a=sendonly\r\n"
+                       "m=audio 0 RTP/AVP %d\r\n"
+                       "a=rtpmap:%d %s/%lu/1\r\n"
                        "a=control:audio-in\r\n"
-                       "a=%s\r\n", sampleRate, "recvonly", "sendonly");
+                       "a=recvonly\r\n",
+                       outPayloadType, outPayloadType, outCodecStr, sampleRate,
+                       inPayloadType, inPayloadType, inCodecStr, sampleRate);
   }
 
   if (isSubtitles) {
@@ -228,9 +238,11 @@ void RTSPServer::handleSetup(char* request, RTSP_Session& session) {
         this->checkAndSetupUDP(this->audioIUnicastSocket, false, serverPort, this->rtpIp);
       }
     }
-    // Create the task to handle incoming audio
-    if (this->rtpAudioITaskHandle == NULL) {
-      xTaskCreate(rtpAudioITaskWrapper, "rtpAudioITask", RTP_STACK_SIZE, this, RTP_PRI, &this->rtpAudioITaskHandle);
+    RTSP_LOGI(LOG_TAG, "Incoming audio setup on port %d", serverPort);
+    if (!createAudioIn()) {
+      RTSP_LOGE(LOG_TAG, "Failed to create incoming audio task");
+    } else {
+      RTSP_LOGI(LOG_TAG, "Incoming audio task setup complete");
     }
   }
 

@@ -96,33 +96,24 @@ void RTSPServer::sendRTSPFrame(const uint8_t* data, size_t len, int quality, int
 
 // void RTSPServer::sendRTSPAudio(int16_t* data, size_t len) {
 //   // len = 1024 bytes (512 samples at 16-bit)
-//   size_t numSamples = len / sizeof(int16_t); // Convert bytes to samples
-//   size_t chunkSize = 256; // Fixed chunk size in samples (512 bytes)
+//   size_t numSamples = len / sizeof(int16_t); // Convert bytes to samples for processing
 
-//   for (size_t i = 0; i < numSamples; i += chunkSize) {
-//     chunkSize = std::min(static_cast<size_t>(256), numSamples - i); // Adjust for last chunk
+//   // Buffers sized for full input (assuming len <= 1024 bytes)
+//   int16_t out[512];    // Max 512 samples (1024 bytes)
+//   int16_t speaker[512]; // Max 512 samples (1024 bytes)
 
-// #ifdef SPEEXDSP
-//     int16_t out[256];
-//     int16_t speaker[256];
+//   // Speaker reference for AEC
+//   int speakerSamples = audioProcessor.readBuffer(speaker, numSamples);
+//   if (speakerSamples < numSamples) {
+//     memset(speaker + speakerSamples, 0, (numSamples - speakerSamples) * sizeof(int16_t));
+//   }
 
-//     // Speaker reference for AEC
-//     int speakerSamples = audioProcessor.readBuffer(speaker, 256);
-//     if (speakerSamples < 256) {
-//       memset(speaker + speakerSamples, 0, (256 - speakerSamples) * sizeof(int16_t));
-//     }
+//   // AEC + Mic-specific preprocessing on full buffer
+//   audioProcessor.processAEC(data, speaker, out);
+//   audioProcessor.preprocessMicAudio(out); // NS/AGC/VAD for mic only
 
-//     // AEC + Mic-specific preprocessing
-//     audioProcessor.processAEC(data + i, speaker, out);
-//     audioProcessor.preprocessMicAudio(out); // NS/AGC/VAD for mic only
-
-//     // Optional VAD for bandwidth (disabled by default with || true)
-//     if (audioProcessor.isMicVoiceDetected() || true) {
-// #else
-//     // No processing, use raw data directly
-//     int16_t* out = data + i;
-// #endif
-
+//   // Optional VAD for bandwidth (disabled by default with || true)
+//   if (audioProcessor.isMicVoiceDetected() || true) {
 //     this->rtpAudioSent = false;
 //     bool multicastSent = false;
 //     for (const auto& sessionPair : this->sessions) {
@@ -130,40 +121,192 @@ void RTSPServer::sendRTSPFrame(const uint8_t* data, size_t len, int quality, int
 //       if (session.isPlaying) {
 //         if (session.isMulticast) {
 //           if (!multicastSent) {
-//             this->sendRtpAudio(out, chunkSize, session.sock, this->rtpAudioPort, false, true);
+//             this->sendRtpAudio(out, len, session.sock, this->rtpAudioPort, false, true); // len in bytes
 //             multicastSent = true;
 //           }
 //         } else {
-//           this->sendRtpAudio(out, chunkSize, session.isHttp ? session.httpSock : session.sock, session.cAudioPort, session.isTCP, false);
+//           this->sendRtpAudio(out, len, session.isHttp ? session.httpSock : session.sock, session.cAudioPort, session.isTCP, false); // len in bytes
 //         }
 //       }
 //     }
 //     this->rtpAudioSent = true;
-
-// #ifdef SPEEXDSP
-//     } // End of VAD if block
-// #endif
 //   }
 // }
 
+// void RTSPServer::sendRTSPAudio(int16_t* data, size_t len) {
+//   size_t numSamples = len / sizeof(int16_t);
+//   uint8_t* rtpData = nullptr;
+//   size_t rtpLen = 0;
+
+//   // Buffers
+//   int16_t* processed = data;  // Default to raw input
+//   uint8_t* g711Out = nullptr;
+// #ifdef USE_SPEEXDSP2
+//   int16_t* speaker = nullptr;
+//   processed = (int16_t*)malloc(len);
+//   speaker = (int16_t*)malloc(len);
+//   if (!processed || !speaker) {
+//     RTSP_LOGE(LOG_TAG, "Failed to allocate SpeexDSP buffers");
+//     free(processed); free(speaker);
+//     return;
+//   }
+//   if (numSamples > 256) {
+//     RTSP_LOGE(LOG_TAG, "Input too large for SpeexDSP buffers");
+//     return;
+//   }
+//   int speakerSamples = audioProcessor.readBuffer(speaker, numSamples);
+//   if (speakerSamples < numSamples) {
+//     memset(speaker + speakerSamples, 0, (numSamples - speakerSamples) * sizeof(int16_t));
+//   }
+//   //audioProcessor.processAEC(data, speaker, processed);
+//   audioProcessor.preprocessMicAudio(processed);
+// #endif
+
+//   // Encode based on output codec
+//   switch (audioOutCodec) {
+//     case G711_ULAW:
+//     case G711_ALAW:
+//       g711Out = (uint8_t*)malloc(numSamples);
+//       if (!g711Out) {
+//         RTSP_LOGE(LOG_TAG, "Failed to allocate G.711 buffer");
+// #ifdef USE_SPEEXDSP2
+//         free(processed); free(speaker);
+// #endif
+//         return;
+//       }
+//       encodeG711(processed, g711Out, numSamples, audioOutCodec == G711_ULAW);
+//       rtpData = g711Out;
+//       rtpLen = numSamples;
+//       break;
+
+//     case L16:
+//       rtpData = (uint8_t*)processed;
+//       rtpLen = len;
+//       break;
+//   }
+
+//   // Send RTP
+// #ifdef USE_SPEEXDSP2
+//   if (audioProcessor.isMicVoiceDetected() || true) {  // VAD optional
+// #else
+//   if (true) {  // No VAD without SpeexDSP
+// #endif
+//     this->rtpAudioSent = false;
+//     bool multicastSent = false;
+//     for (const auto& sessionPair : this->sessions) {
+//       const RTSP_Session& session = sessionPair.second;
+//       if (session.isPlaying) {
+//         if (session.isMulticast) {
+//           if (!multicastSent) {
+//             this->sendRtpAudio(rtpData, rtpLen, session.sock, this->rtpAudioPort, false, true);
+//             multicastSent = true;
+//           }
+//         } else {
+//           this->sendRtpAudio(rtpData, rtpLen, session.isHttp ? session.httpSock : session.sock, 
+//                             session.cAudioPort, session.isTCP, false);
+//         }
+//       }
+//     }
+//     this->rtpAudioSent = true;
+//   }
+
+//   // Clean up
+// #ifdef USE_SPEEXDSP2
+//   free(processed);
+//   free(speaker);
+// #endif
+//   free(g711Out);
+// }
+
 void RTSPServer::sendRTSPAudio(int16_t* data, size_t len) {
-  this->rtpAudioSent = false;
-  bool multicastSent = false;
-  for (const auto& sessionPair : this->sessions) {
-    const RTSP_Session& session = sessionPair.second; 
-    if (session.isPlaying) {
-      if (session.isMulticast) {
-        if (!multicastSent) {
-          this->sendRtpAudio(data, len, session.sock, this->rtpAudioPort, false, true);
-          multicastSent = true;
+  size_t numSamples = len / sizeof(int16_t);
+  uint8_t* rtpData = nullptr;
+  size_t rtpLen = 0;
+
+  // Buffers
+  int16_t* processed = data;
+  static uint8_t g711OutBuf[256];
+#ifdef USE_SPEEXDSP
+  static int16_t processedBuf[256];
+  static int16_t speakerBuf[256];
+  if (numSamples > 256) {
+    RTSP_LOGE(LOG_TAG, "Input too large for SpeexDSP buffers");
+    return;
+  }
+  processed = processedBuf;
+  memcpy(processed, data, len);
+  int speakerSamples = audioProcessor.readBuffer(speakerBuf, numSamples);
+  //RTSP_LOGI(LOG_TAG, "Speaker samples read: %d", speakerSamples);
+  if (speakerSamples < numSamples) {
+    memset(speakerBuf + speakerSamples, 0, (numSamples - speakerSamples) * sizeof(int16_t));
+  }
+  audioProcessor.processAEC(data, speakerBuf, processed);
+  audioProcessor.preprocessMicAudio(processed);
+#endif
+
+  // Encode based on output codec
+  switch (audioOutCodec) {
+    case G711_ULAW:
+    case G711_ALAW:
+      if (numSamples > 256) {
+        RTSP_LOGE(LOG_TAG, "Input too large for G.711 buffer");
+        return;
+      }
+      encodeG711(processed, g711OutBuf, numSamples, audioOutCodec == G711_ULAW);
+      rtpData = g711OutBuf;
+      rtpLen = numSamples;
+      break;
+
+    case L16:
+      rtpData = (uint8_t*)processed;
+      rtpLen = len;
+      break;
+  }
+
+  // Send RTP
+#ifdef USE_SPEEXDSP
+  if (audioProcessor.isMicVoiceDetected() || true) {
+#else
+  if (true) {
+#endif
+    rtpAudioSent = false;
+    bool multicastSent = false;
+    for (const auto& sessionPair : sessions) {
+      const RTSP_Session& session = sessionPair.second;
+      if (session.isPlaying) {
+        if (session.isMulticast) {
+          if (!multicastSent) {
+            sendRtpAudio(rtpData, rtpLen, session.sock, rtpAudioPort, false, true);
+            multicastSent = true;
+          }
+        } else {
+          sendRtpAudio(rtpData, rtpLen, session.isHttp ? session.httpSock : session.sock, 
+                       session.cAudioPort, session.isTCP, false);
         }
-      } else {
-        this->sendRtpAudio(data, len,  session.isHttp ? session.httpSock : session.sock, session.cAudioPort, session.isTCP, false);
       }
     }
+    rtpAudioSent = true;
   }
-  this->rtpAudioSent = true;
 }
+
+// void RTSPServer::sendRTSPAudio(int16_t* data, size_t len) {
+//   this->rtpAudioSent = false;
+//   bool multicastSent = false;
+//   for (const auto& sessionPair : this->sessions) {
+//     const RTSP_Session& session = sessionPair.second; 
+//     if (session.isPlaying) {
+//       if (session.isMulticast) {
+//         if (!multicastSent) {
+//           this->sendRtpAudio(data, len, session.sock, this->rtpAudioPort, false, true);
+//           multicastSent = true;
+//         }
+//       } else {
+//         this->sendRtpAudio(data, len,  session.isHttp ? session.httpSock : session.sock, session.cAudioPort, session.isTCP, false);
+//       }
+//     }
+//   }
+//   this->rtpAudioSent = true;
+// }
 
 void RTSPServer::sendRTSPSubtitles(char* data, size_t len) {
   this->rtpSubtitlesSent = false;
@@ -266,58 +409,57 @@ void RTSPServer::sendRtpFrame(const uint8_t* data, size_t len, uint8_t quality, 
   }
 }
 
-void RTSPServer::sendRtpAudio(const int16_t* data, size_t len, int sock, uint16_t sendRtpPort, bool useTCP, bool isMulticast) {
-  const int RtpHeaderSize = 12; // RTP header size
-  const int MAX_FRAGMENT_SIZE = 1446; // Adjust based on your requirements
-  uint32_t audioLen = len;
-
+void RTSPServer::sendRtpAudio(const uint8_t* data, size_t len, int sock, uint16_t sendRtpPort, bool useTCP, bool isMulticast) {
+  const int RtpHeaderSize = 12;
+  const int MAX_FRAGMENT_SIZE = 1446;
   size_t fragmentOffset = 0;
-  while (fragmentOffset < audioLen) {
-    int fragmentLen = MAX_FRAGMENT_SIZE;
-    if (fragmentLen + fragmentOffset > audioLen) {
-      fragmentLen = audioLen - fragmentOffset;
-    }
+  static bool firstPacket = true;
 
+  while (fragmentOffset < len) {
+    size_t fragmentLen = std::min(static_cast<size_t>(MAX_FRAGMENT_SIZE), len - fragmentOffset);
+    bool isLastFragment = (fragmentOffset + fragmentLen) == len;
     int RtpPacketSize = fragmentLen + RtpHeaderSize;
+
     uint8_t packet[2048];
-    memset(packet, 0x00, sizeof(packet));
+    memset(packet, 0, sizeof(packet));
 
-    // If TCP, we need these first 4 bytes
-    packet[0] = '$'; // Magic number 
-    packet[1] = this->audioCh; // Channel number for RTP (1 for audio)
-    packet[2] = (RtpPacketSize >> 8) & 0xFF; // Packet length high byte 
-    packet[3] = RtpPacketSize & 0xFF; // Packet length low byte
+    packet[0] = '$';
+    packet[1] = this->audioCh;
+    packet[2] = (RtpPacketSize >> 8) & 0xFF;
+    packet[3] = RtpPacketSize & 0xFF;
 
-    // RTP header
-    packet[4] = 0x80; // Version: 2, Padding: 0, Extension: 0, CSRC Count: 0
-    packet[5] = 0x61 | 0x80;  // Dynamic payload type (97) and marker bit
-    packet[6] = (this->audioSequenceNumber >> 8) & 0xFF; // Sequence Number (high byte)
-    packet[7] = this->audioSequenceNumber & 0xFF; // Sequence Number (low byte)
-    packet[8] = (this->audioTimestamp >> 24) & 0xFF; // Timestamp (high byte)
-    packet[9] = (this->audioTimestamp >> 16) & 0xFF; // Timestamp (next byte)
-    packet[10] = (this->audioTimestamp >> 8) & 0xFF; // Timestamp (next byte)
-    packet[11] = this->audioTimestamp & 0xFF; // Timestamp (low byte)
-    packet[12] = (this->audioSSRC >> 24) & 0xFF; // SSRC (high byte)
-    packet[13] = (this->audioSSRC >> 16) & 0xFF; // SSRC (next byte)
-    packet[14] = (this->audioSSRC >> 8) & 0xFF; // SSRC (next byte)
-    packet[15] = this->audioSSRC & 0xFF; // SSRC (low byte)
+    packet[4] = 0x80;
+    packet[5] = (audioOutCodec == G711_ULAW ? 0 : audioOutCodec == G711_ALAW ? 8 : 97) | 
+    (firstPacket && fragmentOffset == 0 ? 0x80 : 0);
+    packet[6] = (this->audioSequenceNumber >> 8) & 0xFF;
+    packet[7] = this->audioSequenceNumber & 0xFF;
+    packet[8] = (this->audioTimestamp >> 24) & 0xFF;
+    packet[9] = (this->audioTimestamp >> 16) & 0xFF;
+    packet[10] = (this->audioTimestamp >> 8) & 0xFF;
+    packet[11] = this->audioTimestamp & 0xFF;
+    packet[12] = (this->audioSSRC >> 24) & 0xFF;
+    packet[13] = (this->audioSSRC >> 16) & 0xFF;
+    packet[14] = (this->audioSSRC >> 8) & 0xFF;
+    packet[15] = this->audioSSRC & 0xFF;
 
     int packetOffset = RtpHeaderSize + 4;
-
-    // Convert audio data from little-endian to big-endian and copy to the packet
-    for (size_t i = 0; i < fragmentLen / 2; i++) {
-      packet[packetOffset++] = (data[fragmentOffset / 2 + i] >> 8) & 0xFF; // High byte
-      packet[packetOffset++] = data[fragmentOffset / 2 + i] & 0xFF; // Low byte
+    if (audioOutCodec == L16) {
+      for (size_t i = 0; i < fragmentLen / 2; i++) {
+        uint16_t sample = ((uint16_t*)data)[fragmentOffset / 2 + i];
+        packet[packetOffset++] = (sample >> 8) & 0xFF;
+        packet[packetOffset++] = sample & 0xFF;
+      }
+    } else {
+      memcpy(packet + packetOffset, data + fragmentOffset, fragmentLen);
+      packetOffset += fragmentLen;
     }
 
-    // Send packet using TCP or UDP
     if (useTCP) {
       sendTcpPacket(packet, packetOffset, sock);
     } else {
       struct sockaddr_in client_addr;
       memset(&client_addr, 0, sizeof(client_addr));
       client_addr.sin_family = AF_INET;
-      // Determine IP address based on whether it's multicast or unicast
       if (isMulticast) {
         inet_aton(this->rtpIp.toString().c_str(), &client_addr.sin_addr);
       } else {
@@ -328,14 +470,14 @@ void RTSPServer::sendRtpAudio(const int16_t* data, size_t len, int sock, uint16_
         }
       }
       client_addr.sin_port = htons(sendRtpPort);
-
       int rtpSocket = isMulticast ? this->audioMulticastSocket : this->audioUnicastSocket;
-
       sendto(rtpSocket, packet + 4, packetOffset - 4, 0, (struct sockaddr*)&client_addr, sizeof(client_addr));
     }
+
     fragmentOffset += fragmentLen;
     this->audioSequenceNumber++;
-    this->audioTimestamp += fragmentLen / 2; // Convert fragment length to number of samples
+    this->audioTimestamp += (audioOutCodec == L16 ? fragmentLen / 2 : fragmentLen);
+    if (isLastFragment) firstPacket = false;
   }
 }
 
