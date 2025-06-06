@@ -330,9 +330,37 @@ void RTSPServer::rtspTask() {
 
     for (int i = 0; i < currentMaxClients; i++) {
       int sd = client_sockets[i];
-
       if (FD_ISSET(sd, &read_fds)) {
-        // Get the session for this client
+        // Check if the socket is still connected
+        char buffer[1];
+        int bytes = recv(sd, buffer, 1, MSG_PEEK);
+        if (bytes <= 0 && errno != EAGAIN) { // Socket closed or error
+          RTSP_LOGD(LOG_TAG, "Client socket %d closed unexpectedly", sd);
+          RTSP_Session* session = nullptr;
+          for (auto& sess : sessions) {
+            if (sess.second.sock == sd) {
+              session = &sess.second;
+              break;
+            }
+          }
+          if (session) {
+            if (getActiveRTSPClients() == 1) {
+              setIsPlaying(false);
+              closeSockets();
+              RTSP_LOGD(LOG_TAG, "All clients disconnected. Resetting firstClientConnected flag.");
+              this->firstClientConnected = false;
+              this->firstClientIsMulticast = false;
+              this->firstClientIsTCP = false;
+            }
+            close(sd);
+            client_sockets[i] = 0;
+            sessions.erase(session->sessionID);
+            decrementActiveRTSPClients();
+          }
+          continue; // Skip to next socket
+        }
+
+        // Existing session lookup and request handling
         RTSP_Session* session = nullptr;
         for (auto& sess : sessions) {
           if (sess.second.sock == sd) {
@@ -346,16 +374,21 @@ void RTSPServer::rtspTask() {
             if (getActiveRTSPClients() == 1) {
               setIsPlaying(false);
               closeSockets();
-              RTSP_LOGD(LOG_TAG, "All clients disconnected. Resetting firstClientConnected flag."); 
-              this->firstClientConnected = false; 
-              this->firstClientIsMulticast = false; 
-              this->firstClientIsTCP = false; 
+              RTSP_LOGD(LOG_TAG, "All clients disconnected. Resetting firstClientConnected flag.");
+              this->firstClientConnected = false;
+              this->firstClientIsMulticast = false;
+              this->firstClientIsTCP = false;
             }
             close(sd);
             client_sockets[i] = 0;
-            sessions.erase(session->sessionID); // Remove session when client disconnects
+            sessions.erase(session->sessionID);
             decrementActiveRTSPClients();
           }
+        } else {
+          RTSP_LOGE(LOG_TAG, "No session found for socket %d, closing", sd);
+          close(sd);
+          client_sockets[i] = 0;
+          decrementActiveRTSPClients(); // Ensure count is decremented
         }
       }
     }
