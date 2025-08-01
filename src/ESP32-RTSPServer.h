@@ -53,6 +53,13 @@ struct RTSP_Session {
 
 class RTSPServer {
 public:
+  enum ClientConnectState {
+    CLIENT_CONNECTED,
+    CLIENT_DISCONNECTED
+  };
+
+  typedef void (*ClientConnectCallback)(ClientConnectState state, uint8_t active_clients);
+
   enum TransportType {
     VIDEO_ONLY,
     AUDIO_ONLY,
@@ -88,6 +95,8 @@ public:
   bool readyToSendSubtitles() const;  // Defined in utils.cpp
 
   bool setCredentials(const char* username, const char* password); // Add method to set credentials
+
+  void onClientEvent(ClientConnectCallback callback); // Set a callback for client connection events
 
   uint32_t rtpFps;
   TransportType transport;
@@ -148,6 +157,7 @@ private:
   SemaphoreHandle_t isPlayingMutex;  // Mutex for protecting access
   SemaphoreHandle_t sendTcpMutex;  // Mutex for protecting TCP send access
   SemaphoreHandle_t maxClientsMutex; // FreeRTOS mutex for maxClients
+  ClientConnectCallback clientEventCallback = nullptr; // Callback for client events
 
   void closeSockets();  // Defined in ESP32-RTSPServer.cpp
   

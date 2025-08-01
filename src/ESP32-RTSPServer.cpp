@@ -62,6 +62,10 @@ RTSPServer::RTSPServer()
 #endif
 }
 
+void RTSPServer::onClientEvent(ClientConnectCallback callback) {
+    this->clientEventCallback = callback;
+}
+
 RTSPServer::~RTSPServer() {
   // Clean up resources
   deinit();
