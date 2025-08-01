@@ -44,8 +44,13 @@ void RTSPServer::incrementActiveRTSPClients() {
   if (this->activeRTSPClients < 255) {
     this->activeRTSPClients++;
     RTSP_LOGI(LOG_TAG, "Active RTSP clients count incremented: %d", this->activeRTSPClients);
-    if (this->clientEventCallback) {
-      this->clientEventCallback(CLIENT_CONNECTED, this->activeRTSPClients);
+    ClientConnectCallback callback_to_call = nullptr;
+    if (xSemaphoreTake(clientEventCallbackMutex, portMAX_DELAY) == pdTRUE) {
+        callback_to_call = this->clientEventCallback;
+        xSemaphoreGive(clientEventCallbackMutex);
+    }
+    if (callback_to_call) {
+        callback_to_call(CLIENT_CONNECTED, this->activeRTSPClients);
     }
   } else {
     RTSP_LOGW(LOG_TAG, "Max RTSP clients reached: %d", 255);
@@ -56,8 +61,13 @@ void RTSPServer::decrementActiveRTSPClients() {
   if (this->activeRTSPClients > 0) {
     this->activeRTSPClients--;
     RTSP_LOGI(LOG_TAG, "Active RTSP clients count decremented: %d", this->activeRTSPClients);
-    if (this->clientEventCallback) {
-      this->clientEventCallback(CLIENT_DISCONNECTED, this->activeRTSPClients);
+    ClientConnectCallback callback_to_call = nullptr;
+    if (xSemaphoreTake(clientEventCallbackMutex, portMAX_DELAY) == pdTRUE) {
+        callback_to_call = this->clientEventCallback;
+        xSemaphoreGive(clientEventCallbackMutex);
+    }
+    if (callback_to_call) {
+        callback_to_call(CLIENT_DISCONNECTED, this->activeRTSPClients);
     }
   } else {
     RTSP_LOGW(LOG_TAG, "Min RTSP clients already: %d", 0);

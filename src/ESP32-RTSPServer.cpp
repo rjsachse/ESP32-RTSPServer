@@ -57,13 +57,17 @@ RTSPServer::RTSPServer()
     isPlayingMutex = xSemaphoreCreateMutex(); // Initialize the mutex
     sendTcpMutex = xSemaphoreCreateMutex(); // Initialize the mutex
     maxClientsMutex = xSemaphoreCreateMutex();
+    clientEventCallbackMutex = xSemaphoreCreateMutex();
 #ifdef RTSP_LOGGING_ENABLED
     esp_log_level_set(LOG_TAG, ESP_LOG_DEBUG); // Set log level to DEBUG
 #endif
 }
 
 void RTSPServer::onClientEvent(ClientConnectCallback callback) {
-    this->clientEventCallback = callback;
+    if (xSemaphoreTake(clientEventCallbackMutex, portMAX_DELAY) == pdTRUE) {
+        this->clientEventCallback = callback;
+        xSemaphoreGive(clientEventCallbackMutex);
+    }
 }
 
 RTSPServer::~RTSPServer() {
@@ -72,6 +76,7 @@ RTSPServer::~RTSPServer() {
   vSemaphoreDelete(this->isPlayingMutex);
   vSemaphoreDelete(this->sendTcpMutex);
   vSemaphoreDelete(this->maxClientsMutex);
+  vSemaphoreDelete(this->clientEventCallbackMutex);
 }
 
 bool RTSPServer::init(TransportType transport, uint16_t rtspPort, uint32_t sampleRate, uint16_t port1, uint16_t port2, uint16_t port3, IPAddress rtpIp, uint8_t rtpTTL) {

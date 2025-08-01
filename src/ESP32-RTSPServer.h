@@ -157,6 +157,7 @@ private:
   SemaphoreHandle_t isPlayingMutex;  // Mutex for protecting access
   SemaphoreHandle_t sendTcpMutex;  // Mutex for protecting TCP send access
   SemaphoreHandle_t maxClientsMutex; // FreeRTOS mutex for maxClients
+  SemaphoreHandle_t clientEventCallbackMutex; // Mutex for client event callback
   ClientConnectCallback clientEventCallback = nullptr; // Callback for client events
 
   void closeSockets();  // Defined in ESP32-RTSPServer.cpp
