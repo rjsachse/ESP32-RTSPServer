@@ -266,9 +266,14 @@ void RTSPServer::handleSetup(char* request, RTSP_Session& session) {
   }
 
   write(session.isHttp ? session.httpSock : session.sock, response, strlen(response));
-  
+
+  if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
+    sessions[session.sessionID] = session;
+    xSemaphoreGive(sessionsMutex);
+  } else {
+    RTSP_LOGE(LOG_TAG, "Failed to acquire sessions mutex");
+  }
   free(response);
-  this->sessions[session.sessionID] = session;
 }
 
 /**
@@ -278,7 +283,12 @@ void RTSPServer::handleSetup(char* request, RTSP_Session& session) {
  */
 void RTSPServer::handlePlay(RTSP_Session& session) {
   session.isPlaying = true;
-  this->sessions[session.sessionID] = session;
+  if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
+    sessions[session.sessionID] = session;
+    xSemaphoreGive(sessionsMutex);
+  } else {
+    RTSP_LOGE(LOG_TAG, "Failed to acquire sessions mutex");
+  }
   setIsPlaying(true);
 
   char response[256];
@@ -303,7 +313,12 @@ void RTSPServer::handlePlay(RTSP_Session& session) {
  */
 void RTSPServer::handlePause(RTSP_Session& session) {
   session.isPlaying = false;
-  this->sessions[session.sessionID] = session;
+  if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
+    sessions[session.sessionID] = session;
+    xSemaphoreGive(sessionsMutex);
+  } else {
+    RTSP_LOGE(LOG_TAG, "Failed to acquire sessions mutex");
+  }
   updateIsPlayingStatus();
   char response[128];
   int len = snprintf(response, sizeof(response),
@@ -321,7 +336,12 @@ void RTSPServer::handlePause(RTSP_Session& session) {
  */
 void RTSPServer::handleTeardown(RTSP_Session& session) {
   session.isPlaying = false;
-  this->sessions[session.sessionID] = session;
+  if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
+    sessions[session.sessionID] = session;
+    xSemaphoreGive(sessionsMutex);
+  } else {
+    RTSP_LOGE(LOG_TAG, "Failed to acquire sessions mutex");
+  }
   updateIsPlayingStatus();
 
   char response[128];
@@ -372,17 +392,20 @@ bool RTSPServer::handleRTSPRequest(RTSP_Session& session) {
     } else if (err == ECONNRESET || err == ENOTCONN) {
       RTSP_LOGD(LOG_TAG, "Connection reset/closed - HandleTeardown");
       // Handle teardown for current session
-      this->handleTeardown(session);
-      // If this is an HTTP session, find and teardown both GET and POST sessions
-      if (session.isHttp && session.sessionCookie[0] != '\0') {
-          // Find the paired session
+      if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
+        this->handleTeardown(session);
+        // If this is an HTTP session, find and teardown both GET and POST sessions
+        if (session.isHttp && session.sessionCookie[0] != '\0') {
           RTSP_Session* pairedSession = findSessionByCookie(session.sessionCookie);
           if (pairedSession && pairedSession != &session) {
-              RTSP_LOGD(LOG_TAG, "Found paired HTTP session, handling teardown");
-              this->handleTeardown(*pairedSession);
+            RTSP_LOGD(LOG_TAG, "Found paired HTTP session, handling teardown");
+            this->handleTeardown(*pairedSession);
           }
+        }
+        xSemaphoreGive(sessionsMutex);
+      } else {
+        RTSP_LOGE(LOG_TAG, "Failed to acquire sessions mutex");
       }
-      
       return false;
     } else {
       RTSP_LOGE(LOG_TAG, "Error reading from socket, error: %d", err);
@@ -447,8 +470,15 @@ bool RTSPServer::handleRTSPRequest(RTSP_Session& session) {
 
   // Extract session ID using the provided function
   uint32_t sessionID = extractSessionID(buffer);
-  if (sessionID != 0 && sessions.find(sessionID) != sessions.end()) {
-    session.sessionID = sessionID;
+  if (sessionID != 0) {
+    if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
+      if (sessions.find(sessionID) != sessions.end()) {
+        session.sessionID = sessionID;
+      }
+      xSemaphoreGive(sessionsMutex);
+    } else {
+      RTSP_LOGE(LOG_TAG, "Failed to acquire sessions mutex");
+    }
   }
 
   // Authentication check
@@ -494,6 +524,13 @@ bool RTSPServer::handleRTSPRequest(RTSP_Session& session) {
     strncpy(session.sessionCookie, sessionCookie, MAX_COOKIE_LENGTH - 1);
     session.sessionCookie[MAX_COOKIE_LENGTH - 1] = '\0';
 
+    if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
+      sessions[session.sessionID] = session;
+      xSemaphoreGive(sessionsMutex);
+    } else {
+      RTSP_LOGE(LOG_TAG, "Failed to acquire sessions mutex");
+    }
+
     char response[512];
     snprintf(response, sizeof(response),
              "HTTP/1.1 200 OK\r\n"  // Use HTTP/1.1 for better compatibility
@@ -516,15 +553,24 @@ bool RTSPServer::handleRTSPRequest(RTSP_Session& session) {
     extractSessionCookie(buffer, sessionCookie, sizeof(sessionCookie));
     
     // Find corresponding GET session
-    RTSP_Session* getSession = findSessionByCookie(sessionCookie);
-    if (getSession) {
+    RTSP_Session* getSession = nullptr;
+    if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
+      getSession = findSessionByCookie(sessionCookie);
+      if (getSession) {
         // Keep POST session but use GET session's socket for responses
         session.httpSock = getSession->sock;
         session.isHttp = true;
         strncpy(session.sessionCookie, sessionCookie, MAX_COOKIE_LENGTH - 1);
         session.sessionCookie[MAX_COOKIE_LENGTH - 1] = '\0';
+        sessions[session.sessionID] = session;
+      }
+      xSemaphoreGive(sessionsMutex);
     } else {
-        RTSP_LOGE(LOG_TAG, "No matching GET session found for cookie: %s", sessionCookie);
+      RTSP_LOGE(LOG_TAG, "Failed to acquire sessions mutex");
+    }
+
+    if (!getSession) {
+      RTSP_LOGE(LOG_TAG, "No matching GET session found for cookie: %s", sessionCookie);
     }
   } else {
     // Handle regular RTSP commands
@@ -612,10 +658,16 @@ void RTSPServer::extractSessionCookie(const char* buffer, char* sessionCookie, s
 }
 
 RTSP_Session* RTSPServer::findSessionByCookie(const char* cookie) {
+  if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
     for (auto& pair : sessions) {
-        if (strcmp(pair.second.sessionCookie, cookie) == 0) {
-            return &pair.second;
-        }
+      if (strcmp(pair.second.sessionCookie, cookie) == 0) {
+        xSemaphoreGive(sessionsMutex);
+        return &pair.second;
+      }
     }
-    return nullptr;
+    xSemaphoreGive(sessionsMutex);
+  } else {
+    RTSP_LOGE(LOG_TAG, "Failed to acquire sessions mutex");
+  }
+  return nullptr;
 }

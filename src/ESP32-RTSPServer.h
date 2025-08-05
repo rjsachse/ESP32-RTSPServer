@@ -36,6 +36,16 @@
 
 #define MAX_COOKIE_LENGTH 128 // max length of session cookie
 
+// Define client activity types
+enum class ClientActivityType {
+  CONNECTED,
+  DISCONNECTED,
+  REFUSED_MAX_CLIENTS
+};
+
+// Callback function type for client activity
+typedef void (*ClientActivityCallback)(ClientActivityType activity, const char* clientIp, uint16_t clientPort, uint8_t activeClients);
+
 struct RTSP_Session {
   uint32_t sessionID;
   int sock;
@@ -88,6 +98,8 @@ public:
   bool readyToSendSubtitles() const;  // Defined in utils.cpp
 
   bool setCredentials(const char* username, const char* password); // Add method to set credentials
+
+  void setClientActivityCallback(ClientActivityCallback callback);
 
   uint32_t rtpFps;
   TransportType transport;
@@ -148,6 +160,9 @@ private:
   SemaphoreHandle_t isPlayingMutex;  // Mutex for protecting access
   SemaphoreHandle_t sendTcpMutex;  // Mutex for protecting TCP send access
   SemaphoreHandle_t maxClientsMutex; // FreeRTOS mutex for maxClients
+  SemaphoreHandle_t sessionsMutex;
+  
+  ClientActivityCallback clientActivityCallback;
 
   void closeSockets();  // Defined in ESP32-RTSPServer.cpp
   
@@ -220,8 +235,14 @@ private:
   bool isBase64Encoded(const char* buffer, size_t length);
   void handleRTSPCommand(char* command, RTSP_Session& session);
   bool decodeBase64(const char* input, size_t inputLen, char* output, size_t* outputLen);
-  void wrapInHTTP(char* buffer, size_t len, char* response, size_t maxLen);  // Add this line
-  RTSP_Session* findSessionByCookie(const char* cookie);  // Add this line
+  void wrapInHTTP(char* buffer, size_t len, char* response, size_t maxLen);
+  RTSP_Session* findSessionByCookie(const char* cookie);
+  
+  void getClientAddress(const struct sockaddr_in& clientAddr, char* ipBuffer, size_t ipBufferSize, uint16_t& port);
+  void setupFdSet(fd_set& read_fds, int* client_sockets, int max_clients, int& max_sd);
+  bool handleNewClient(int& client_sock, struct sockaddr_in& clientAddr, socklen_t addr_len, int* client_sockets, uint8_t currentMaxClients);
+  void handleExistingClients(fd_set& read_fds, int* client_sockets, uint8_t currentMaxClients);
+
 };
 
 #endif // ESP32_RTSP_SERVER_H

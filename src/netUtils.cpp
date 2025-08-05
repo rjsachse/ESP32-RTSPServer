@@ -76,3 +76,8 @@ bool RTSPServer::setNonBlocking(int sock) {
   RTSP_LOGI(LOG_TAG, "Socket set to non-blocking mode");
   return true;
 }
+
+void RTSPServer::getClientAddress(const struct sockaddr_in& clientAddr, char* ipBuffer, size_t ipBufferSize, uint16_t& port) {
+    inet_ntop(AF_INET, &clientAddr.sin_addr, ipBuffer, ipBufferSize);
+    port = ntohs(clientAddr.sin_port);
+}

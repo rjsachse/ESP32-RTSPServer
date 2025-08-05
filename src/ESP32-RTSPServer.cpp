@@ -57,6 +57,7 @@ RTSPServer::RTSPServer()
     isPlayingMutex = xSemaphoreCreateMutex(); // Initialize the mutex
     sendTcpMutex = xSemaphoreCreateMutex(); // Initialize the mutex
     maxClientsMutex = xSemaphoreCreateMutex();
+    sessionsMutex = xSemaphoreCreateMutex();
 #ifdef RTSP_LOGGING_ENABLED
     esp_log_level_set(LOG_TAG, ESP_LOG_DEBUG); // Set log level to DEBUG
 #endif
@@ -68,6 +69,7 @@ RTSPServer::~RTSPServer() {
   vSemaphoreDelete(this->isPlayingMutex);
   vSemaphoreDelete(this->sendTcpMutex);
   vSemaphoreDelete(this->maxClientsMutex);
+  vSemaphoreDelete(sessionsMutex);
 }
 
 bool RTSPServer::init(TransportType transport, uint16_t rtspPort, uint32_t sampleRate, uint16_t port1, uint16_t port2, uint16_t port3, IPAddress rtpIp, uint8_t rtpTTL) {
@@ -157,6 +159,12 @@ void RTSPServer::deinit() {
   if (this->rtspStreamBuffer) {
     free(this->rtspStreamBuffer);
   }
+  if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
+    sessions.clear();
+    xSemaphoreGive(sessionsMutex);
+  } else {
+    RTSP_LOGE(LOG_TAG, "Failed to acquire sessions mutex");
+  }
 
   RTSP_LOGI(LOG_TAG, "RTSP server deinitialized.");
 }
@@ -245,119 +253,175 @@ void RTSPServer::rtspTaskWrapper(void* pvParameters) {
   server->rtspTask();
 }
 
-void RTSPServer::rtspTask() {
-  struct sockaddr_in clientAddr;
-  socklen_t addr_len = sizeof(clientAddr);
-  fd_set read_fds;
-  int client_sockets[MAX_CLIENTS] = {0};
-  int max_sd, activity, client_sock;
+void RTSPServer::setClientActivityCallback(ClientActivityCallback callback) {
+  clientActivityCallback = callback;
+}
 
-  while (true) {
-    FD_ZERO(&read_fds);
-    FD_SET(this->rtspSocket, &read_fds);
-    max_sd = this->rtspSocket;
+void RTSPServer::setupFdSet(fd_set& read_fds, int* client_sockets, int max_clients, int& max_sd) {
+  FD_ZERO(&read_fds);
+  FD_SET(this->rtspSocket, &read_fds);
+  max_sd = this->rtspSocket;
 
-    uint8_t currentMaxClients = getMaxClients();
-
-    for (int i = 0; i < currentMaxClients; i++) {
-      int sd = client_sockets[i];
-      if (sd > 0) FD_SET(sd, &read_fds);
+  for (int i = 0; i < max_clients; i++) {
+    int sd = client_sockets[i];
+    if (sd > 0) {
+      FD_SET(sd, &read_fds);
       if (sd > max_sd) max_sd = sd;
     }
+  }
+}
 
-    activity = select(max_sd + 1, &read_fds, NULL, NULL, NULL);
+bool RTSPServer::handleNewClient(int& client_sock, struct sockaddr_in& clientAddr, socklen_t addr_len, int* client_sockets, uint8_t currentMaxClients) {
+  client_sock = accept(this->rtspSocket, (struct sockaddr *)&clientAddr, &addr_len);
+  if (client_sock < 0) {
+    RTSP_LOGE(LOG_TAG, "Accept error");
+    return false;
+  }
 
-    if (activity < 0 && errno != EINTR) {
-      RTSP_LOGE(LOG_TAG, "Select error");
-      continue;
+  // Get client IP and port
+  char clientIp[INET_ADDRSTRLEN];
+  uint16_t clientPort;
+  getClientAddress(clientAddr, clientIp, INET_ADDRSTRLEN, clientPort);
+
+  if (getActiveRTSPClients() >= currentMaxClients) {
+    const char* response = "RTSP/1.0 503 Service Unavailable\r\n\r\n";
+    write(client_sock, response, strlen(response));
+    close(client_sock);
+    RTSP_LOGE(LOG_TAG, "Max clients reached. Sent 503 error to new client.");
+
+    if (clientActivityCallback) {
+      clientActivityCallback(ClientActivityType::REFUSED_MAX_CLIENTS, clientIp, clientPort, getActiveRTSPClients());
     }
+    return false;
+  }
 
-    if (FD_ISSET(this->rtspSocket, &read_fds)) {
-      if (getActiveRTSPClients() >= currentMaxClients) {
-        client_sock = accept(this->rtspSocket, (struct sockaddr *)&clientAddr, &addr_len);
-        if (client_sock < 0) {
-          RTSP_LOGE(LOG_TAG, "Accept error");
-          continue;
-        }
+  if (!setNonBlocking(client_sock)) {
+    RTSP_LOGE(LOG_TAG, "Failed to set RTSP socket to non-blocking mode.");
+    close(client_sock);
+    return false;
+  }
 
-        const char* response = "RTSP/1.0 503 Service Unavailable\r\n\r\n";
-        write(client_sock, response, strlen(response));
-        close(client_sock);
-        RTSP_LOGE(LOG_TAG, "Max clients reached. Sent 503 error to new client.");
-        continue;
+  RTSP_LOGI(LOG_TAG, "New client connected");
+
+  // Create a new session for the client
+  RTSP_Session session = {
+    esp_random(),  // sessionID
+    client_sock,   // sock
+    0,            // cseq
+    0,            // cVideoPort
+    0,            // cAudioPort
+    0,            // cSrtPort
+    false,        // isMulticast
+    false,        // isPlaying
+    false,        // isTCP
+    false,        // isHttp
+    -1,           // httpSock
+    {0}           // sessionCookie
+  };
+  if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
+    sessions[session.sessionID] = session;
+    xSemaphoreGive(sessionsMutex);
+  } else {
+    RTSP_LOGE(LOG_TAG, "Failed to acquire sessions mutex");
+    close(client_sock);
+    return false;
+  }
+
+  for (int i = 0; i < currentMaxClients; i++) {
+    if (client_sockets[i] == 0) {
+      client_sockets[i] = client_sock;
+      incrementActiveRTSPClients();
+      RTSP_LOGI(LOG_TAG, "Added to list of sockets as %d", i);
+
+      if (clientActivityCallback) {
+        clientActivityCallback(ClientActivityType::CONNECTED, clientIp, clientPort, getActiveRTSPClients());
       }
-
-      client_sock = accept(this->rtspSocket, (struct sockaddr *)&clientAddr, &addr_len);
-      if (client_sock < 0) {
-        RTSP_LOGE(LOG_TAG, "Accept error");
-        continue;
-      }
-
-      if (!setNonBlocking(client_sock)) {
-        RTSP_LOGE(LOG_TAG, "Failed to set RTSP socket to non-blocking mode.");
-        close(client_sock);
-        continue;
-      }
-
-      RTSP_LOGI(LOG_TAG, "New client connected");
-
-      // Create a new session for the new client
-      RTSP_Session session = {
-        esp_random(),  // sessionID
-        client_sock,   // sock
-        0,            // cseq
-        0,            // cVideoPort
-        0,            // cAudioPort
-        0,            // cSrtPort
-        false,        // isMulticast
-        false,        // isPlaying
-        false,        // isTCP
-        false,        // isHttp
-        -1,           // httpSock
-        {0}           // sessionCookie (initialized as empty)
-      };
-      sessions[session.sessionID] = session;
-
-      for (int i = 0; i < currentMaxClients; i++) {
-        if (client_sockets[i] == 0) {
-          client_sockets[i] = client_sock;
-          incrementActiveRTSPClients();
-          RTSP_LOGI(LOG_TAG, "Added to list of sockets as %d", i);
-          break;
-        }
-      }
+      return true;
     }
+  }
+  return false;
+}
 
-    for (int i = 0; i < currentMaxClients; i++) {
-      int sd = client_sockets[i];
-
-      if (FD_ISSET(sd, &read_fds)) {
-        // Get the session for this client
-        RTSP_Session* session = nullptr;
+void RTSPServer::handleExistingClients(fd_set& read_fds, int* client_sockets, uint8_t currentMaxClients) {
+  for (int i = 0; i < currentMaxClients; i++) {
+    int sd = client_sockets[i];
+    if (sd > 0 && FD_ISSET(sd, &read_fds)) {
+      RTSP_Session* session = nullptr;
+      if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
         for (auto& sess : sessions) {
           if (sess.second.sock == sd) {
             session = &sess.second;
             break;
           }
         }
-        if (session) {
-          bool keepConnection = handleRTSPRequest(*session);
-          if (!keepConnection) {
-            if (getActiveRTSPClients() == 1) {
-              setIsPlaying(false);
-              closeSockets();
-              RTSP_LOGD(LOG_TAG, "All clients disconnected. Resetting firstClientConnected flag."); 
-              this->firstClientConnected = false; 
-              this->firstClientIsMulticast = false; 
-              this->firstClientIsTCP = false; 
-            }
-            close(sd);
-            client_sockets[i] = 0;
-            sessions.erase(session->sessionID); // Remove session when client disconnects
-            decrementActiveRTSPClients();
+        xSemaphoreGive(sessionsMutex);
+      } else {
+        RTSP_LOGE(LOG_TAG, "Failed to acquire sessions mutex");
+        continue;
+      }
+      if (session) {
+        bool keepConnection = handleRTSPRequest(*session);
+        if (!keepConnection) {
+          // Get client IP and port
+          char clientIp[INET_ADDRSTRLEN];
+          uint16_t clientPort = 0;
+          struct sockaddr_in clientAddr;
+          socklen_t addr_len = sizeof(clientAddr);
+          if (getpeername(sd, (struct sockaddr*)&clientAddr, &addr_len) == 0) {
+            getClientAddress(clientAddr, clientIp, INET_ADDRSTRLEN, clientPort);
+          } else {
+            strcpy(clientIp, "unknown");
+          }
+
+          if (getActiveRTSPClients() == 1) {
+            setIsPlaying(false);
+            closeSockets();
+            RTSP_LOGD(LOG_TAG, "All clients disconnected. Resetting firstClientConnected flag.");
+            this->firstClientConnected = false;
+            this->firstClientIsMulticast = false;
+            this->firstClientIsTCP = false;
+          }
+          close(sd);
+          client_sockets[i] = 0;
+          uint8_t activeClients = getActiveRTSPClients();
+          decrementActiveRTSPClients();
+
+          if (clientActivityCallback) {
+            clientActivityCallback(ClientActivityType::DISCONNECTED, clientIp, clientPort, activeClients);
+          }
+          if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
+            sessions.erase(session->sessionID);
+            xSemaphoreGive(sessionsMutex);
+          } else {
+            RTSP_LOGE(LOG_TAG, "Failed to acquire sessions mutex");
           }
         }
       }
     }
+  }
+}
+
+void RTSPServer::rtspTask() {
+  struct sockaddr_in clientAddr;
+  socklen_t addr_len = sizeof(clientAddr);
+  fd_set read_fds;
+  int client_sockets[MAX_CLIENTS] = {0};
+  int max_sd, activity;
+
+  while (true) {
+    setupFdSet(read_fds, client_sockets, getMaxClients(), max_sd);
+
+    activity = select(max_sd + 1, &read_fds, NULL, NULL, NULL);
+    if (activity < 0 && errno != EINTR) {
+      RTSP_LOGE(LOG_TAG, "Select error");
+      continue;
+    }
+
+    if (FD_ISSET(this->rtspSocket, &read_fds)) {
+      int client_sock;
+      handleNewClient(client_sock, clientAddr, addr_len, client_sockets, getMaxClients());
+    }
+
+    handleExistingClients(read_fds, client_sockets, getMaxClients());
   }
 }
