@@ -175,30 +175,38 @@ bool RTSPServer::reinit() {
 }
 
 void RTSPServer::closeSockets() {
+  RTSP_LOGD(LOG_TAG, "Starting closeSockets");
   if (videoUnicastSocket != -1) {
+    RTSP_LOGD(LOG_TAG, "Closing videoUnicastSocket %d", videoUnicastSocket);
     close(videoUnicastSocket);
     videoUnicastSocket = -1;
   }
   if (audioUnicastSocket != -1) {
+    RTSP_LOGD(LOG_TAG, "Closing audioUnicastSocket %d", audioUnicastSocket);
     close(audioUnicastSocket);
     audioUnicastSocket = -1;
   }
   if (subtitlesUnicastSocket != -1) {
+    RTSP_LOGD(LOG_TAG, "Closing subtitlesUnicastSocket %d", subtitlesUnicastSocket);
     close(subtitlesUnicastSocket);
     subtitlesUnicastSocket = -1;
   }
   if (videoMulticastSocket != -1) {
+    RTSP_LOGD(LOG_TAG, "Closing videoMulticastSocket %d", videoMulticastSocket);
     close(videoMulticastSocket);
     videoMulticastSocket = -1;
   }
   if (audioMulticastSocket != -1) {
+    RTSP_LOGD(LOG_TAG, "Closing audioMulticastSocket %d", audioMulticastSocket);
     close(audioMulticastSocket);
     audioMulticastSocket = -1;
   }
   if (subtitlesMulticastSocket != -1) {
+    RTSP_LOGD(LOG_TAG, "Closing subtitlesMulticastSocket %d", subtitlesMulticastSocket);
     close(subtitlesMulticastSocket);
     subtitlesMulticastSocket = -1;
   }
+  RTSP_LOGD(LOG_TAG, "Finished closeSockets");
 }
 
 bool RTSPServer::prepRTSP() {
@@ -343,62 +351,105 @@ bool RTSPServer::handleNewClient(int& client_sock, struct sockaddr_in& clientAdd
 }
 
 void RTSPServer::handleExistingClients(fd_set& read_fds, int* client_sockets, uint8_t currentMaxClients) {
+  RTSP_LOGD(LOG_TAG, "Starting handleExistingClients, max clients: %d", currentMaxClients);
+
   for (int i = 0; i < currentMaxClients; i++) {
     int sd = client_sockets[i];
-    if (sd > 0 && FD_ISSET(sd, &read_fds)) {
-      RTSP_Session* session = nullptr;
+    if (sd <= 0 || !FD_ISSET(sd, &read_fds)) {
+      continue;
+    }
+
+    RTSP_LOGD(LOG_TAG, "Processing socket %d", sd);
+    RTSP_Session* session = nullptr;
+    if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
+      for (auto& sess : sessions) {
+        if (sess.second.sock == sd || sess.second.httpSock == sd) {
+          session = &sess.second;
+          break;
+        }
+      }
+      xSemaphoreGive(sessionsMutex);
+    } else {
+      RTSP_LOGE(LOG_TAG, "Failed to acquire sessionsMutex");
+      continue;
+    }
+
+    char clientIp[INET_ADDRSTRLEN] = "unknown";
+    uint16_t clientPort = 0;
+    struct sockaddr_in clientAddr;
+    socklen_t addr_len = sizeof(clientAddr);
+    if (sd >= 0 && getpeername(sd, (struct sockaddr*)&clientAddr, &addr_len) == 0) {
+      getClientAddress(clientAddr, clientIp, INET_ADDRSTRLEN, clientPort);
+    }
+
+    if (!session) {
+      RTSP_LOGD(LOG_TAG, "Session for socket %d not found, cleaning up", sd);
+      if (sd >= 0) {
+        close(sd);
+        client_sockets[i] = 0;
+      }
+      decrementActiveRTSPClients();
+      uint8_t activeClients = getActiveRTSPClients();
+      if (activeClients == 0) {
+        setIsPlaying(false);
+        closeSockets();
+        RTSP_LOGD(LOG_TAG, "All clients disconnected. Resetting firstClientConnected flag.");
+        this->firstClientConnected = false;
+        this->firstClientIsMulticast = false;
+        this->firstClientIsTCP = false;
+      }
+      if (clientActivityCallback) {
+        RTSP_LOGD(LOG_TAG, "Callback for socket %d, active clients: %d", sd, activeClients);
+        clientActivityCallback(ClientActivityType::DISCONNECTED, clientIp, clientPort, activeClients);
+      }
+      continue;
+    }
+
+    RTSP_LOGD(LOG_TAG, "Calling handleRTSPRequest for session %lu", session->sessionID);
+    bool keepConnection = handleRTSPRequest(*session);
+    if (!keepConnection) {
+      char clientIp[INET_ADDRSTRLEN] = "unknown";
+      uint16_t clientPort = 0;
+      struct sockaddr_in clientAddr;
+      socklen_t addr_len = sizeof(clientAddr);
+      if (sd >= 0 && getpeername(sd, (struct sockaddr*)&clientAddr, &addr_len) == 0) {
+        getClientAddress(clientAddr, clientIp, INET_ADDRSTRLEN, clientPort);
+      }
+
+      if (sd >= 0) {
+        RTSP_LOGD(LOG_TAG, "Closing socket %d for session %lu", sd, session->sessionID);
+        close(sd);
+        client_sockets[i] = 0;
+      }
+
+      decrementActiveRTSPClients();
+      uint8_t activeClients = getActiveRTSPClients();
+      if (activeClients == 0) {
+        setIsPlaying(false);
+        closeSockets();
+        RTSP_LOGD(LOG_TAG, "All clients disconnected. Resetting firstClientConnected flag.");
+        this->firstClientConnected = false;
+        this->firstClientIsMulticast = false;
+        this->firstClientIsTCP = false;
+      }
+      if (clientActivityCallback) {
+        RTSP_LOGD(LOG_TAG, "Callback for session %lu, active clients: %d", session->sessionID, activeClients);
+        clientActivityCallback(ClientActivityType::DISCONNECTED, clientIp, clientPort, activeClients);
+      }
+
       if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
-        for (auto& sess : sessions) {
-          if (sess.second.sock == sd) {
-            session = &sess.second;
-            break;
-          }
+        if (sessions.find(session->sessionID) != sessions.end()) {
+          sessions.erase(session->sessionID);
+          RTSP_LOGD(LOG_TAG, "Session %lu removed, sessions remaining: %d", session->sessionID, sessions.size());
         }
         xSemaphoreGive(sessionsMutex);
       } else {
-        RTSP_LOGE(LOG_TAG, "Failed to acquire sessions mutex");
-        continue;
-      }
-      if (session) {
-        bool keepConnection = handleRTSPRequest(*session);
-        if (!keepConnection) {
-          // Get client IP and port
-          char clientIp[INET_ADDRSTRLEN];
-          uint16_t clientPort = 0;
-          struct sockaddr_in clientAddr;
-          socklen_t addr_len = sizeof(clientAddr);
-          if (getpeername(sd, (struct sockaddr*)&clientAddr, &addr_len) == 0) {
-            getClientAddress(clientAddr, clientIp, INET_ADDRSTRLEN, clientPort);
-          } else {
-            strcpy(clientIp, "unknown");
-          }
-
-          if (getActiveRTSPClients() == 1) {
-            setIsPlaying(false);
-            closeSockets();
-            RTSP_LOGD(LOG_TAG, "All clients disconnected. Resetting firstClientConnected flag.");
-            this->firstClientConnected = false;
-            this->firstClientIsMulticast = false;
-            this->firstClientIsTCP = false;
-          }
-          close(sd);
-          client_sockets[i] = 0;
-          uint8_t activeClients = getActiveRTSPClients();
-          decrementActiveRTSPClients();
-
-          if (clientActivityCallback) {
-            clientActivityCallback(ClientActivityType::DISCONNECTED, clientIp, clientPort, activeClients);
-          }
-          if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
-            sessions.erase(session->sessionID);
-            xSemaphoreGive(sessionsMutex);
-          } else {
-            RTSP_LOGE(LOG_TAG, "Failed to acquire sessions mutex");
-          }
-        }
+        RTSP_LOGE(LOG_TAG, "Failed to acquire sessionsMutex");
       }
     }
   }
+
+  RTSP_LOGD(LOG_TAG, "Finished handleExistingClients, active clients: %d", getActiveRTSPClients());
 }
 
 void RTSPServer::rtspTask() {

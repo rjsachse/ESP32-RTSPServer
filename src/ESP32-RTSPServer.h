@@ -233,7 +233,7 @@ private:
   void sendUnauthorizedResponse(RTSP_Session& session); // Add method to send 401 Unauthorized response
   void extractSessionCookie(const char* buffer, char* sessionCookie, size_t maxLen);
   bool isBase64Encoded(const char* buffer, size_t length);
-  void handleRTSPCommand(char* command, RTSP_Session& session);
+  bool handleRTSPCommand(char* command, RTSP_Session& session);
   bool decodeBase64(const char* input, size_t inputLen, char* output, size_t* outputLen);
   void wrapInHTTP(char* buffer, size_t len, char* response, size_t maxLen);
   RTSP_Session* findSessionByCookie(const char* cookie);
