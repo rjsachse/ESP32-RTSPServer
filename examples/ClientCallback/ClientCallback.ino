@@ -7,6 +7,7 @@
 // ===================
 // Select camera model
 // ===================
+#ifndef
 //#define CAMERA_MODEL_WROVER_KIT // Has PSRAM
 //#define CAMERA_MODEL_ESP_EYE  // Has PSRAM
 //#define CAMERA_MODEL_ESP32S3_EYE // Has PSRAM
@@ -26,20 +27,29 @@
 //#define CAMERA_MODEL_ESP32S3_CAM_LCD
 //#define CAMERA_MODEL_DFRobot_FireBeetle2_ESP32S3 // Has PSRAM
 //#define CAMERA_MODEL_DFRobot_Romeo_ESP32S3 // Has PSRAM
+#endif
 #include "camera_pins.h"
 
 // ===========================
 // Enter your WiFi credentials
 // ===========================
-const char *ssid = "**********";
-const char *password = "**********";
+#ifndef SSID_NAME
+#define SSID_NAME = "**********";
+#endif
+#ifndef SSID_PASWORD
+#define SSID_PASWORD = "**********";
+#endif
 
 // RTSPServer instance
 RTSPServer rtspServer;
 
 // Can set a username and password for RTSP authentication or leave blank for no authentication
-const char *rtspUser = "";
-const char *rtspPassword = "";
+#ifndef RTSP_USER
+#define RTSP_USER = "";
+#endif
+#ifndef RTSP_PASSWORD
+#define RTSP_PASSWORD = "";
+#endif
 
 // Variable to hold quality for RTSP frame
 int quality;
