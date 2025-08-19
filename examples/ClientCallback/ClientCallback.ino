@@ -4,29 +4,40 @@
 #include <ESP32-RTSPServer.h>
 #include "esp_camera.h"
 
+// Reference: Camera pin definitions and setup adapted from MJPEG2SD project by s60sc (https://github.com/s60sc/ESP32-CAM_MJPEG2SD)
 // ===================
 // Select camera model
 // ===================
-#ifndef
-//#define CAMERA_MODEL_WROVER_KIT // Has PSRAM
-//#define CAMERA_MODEL_ESP_EYE  // Has PSRAM
-//#define CAMERA_MODEL_ESP32S3_EYE // Has PSRAM
-//#define CAMERA_MODEL_M5STACK_PSRAM // Has PSRAM
-//#define CAMERA_MODEL_M5STACK_V2_PSRAM // M5Camera version B Has PSRAM
-//#define CAMERA_MODEL_M5STACK_WIDE // Has PSRAM
-//#define CAMERA_MODEL_M5STACK_ESP32CAM // No PSRAM
-//#define CAMERA_MODEL_M5STACK_UNITCAM // No PSRAM
-//#define CAMERA_MODEL_M5STACK_CAMS3_UNIT  // Has PSRAM
-//#define CAMERA_MODEL_AI_THINKER // Has PSRAM
-//#define CAMERA_MODEL_TTGO_T_JOURNAL // No PSRAM
-//#define CAMERA_MODEL_XIAO_ESP32S3 // Has PSRAM
-#define CAMERA_MODEL_XENOIONEX // Has PSRAM Custom Board
-// ** Espressif Internal Boards **
+// User's ESP32 cam board
+#if defined(CONFIG_IDF_TARGET_ESP32)
+#define CAMERA_MODEL_AI_THINKER 
+//#define CAMERA_MODEL_WROVER_KIT 
+//#define CAMERA_MODEL_ESP_EYE 
+//#define CAMERA_MODEL_M5STACK_PSRAM 
+//#define CAMERA_MODEL_M5STACK_V2_PSRAM 
+//#define CAMERA_MODEL_M5STACK_WIDE 
+//#define CAMERA_MODEL_M5STACK_ESP32CAM
+//#define CAMERA_MODEL_M5STACK_UNITCAM
+//#define CAMERA_MODEL_TTGO_T_JOURNAL 
 //#define CAMERA_MODEL_ESP32_CAM_BOARD
-//#define CAMERA_MODEL_ESP32S2_CAM_BOARD
+//#define CAMERA_MODEL_TTGO_T_CAMERA_PLUS
+//#define CAMERA_MODEL_UICPAL_ESP32
+//#define AUXILIARY
+
+// User's ESP32S3 cam board
+#elif defined(CONFIG_IDF_TARGET_ESP32S3)
+#define CAMERA_MODEL_FREENOVE_ESP32S3_CAM
+//#define CAMERA_MODEL_PCBFUN_ESP32S3_CAM
+//#define CAMERA_MODEL_XIAO_ESP32S3 
+//#define CAMERA_MODEL_NEW_ESPS3_RE1_0
+//#define CAMERA_MODEL_M5STACK_CAMS3_UNIT
+//#define CAMERA_MODEL_ESP32S3_EYE 
 //#define CAMERA_MODEL_ESP32S3_CAM_LCD
-//#define CAMERA_MODEL_DFRobot_FireBeetle2_ESP32S3 // Has PSRAM
-//#define CAMERA_MODEL_DFRobot_Romeo_ESP32S3 // Has PSRAM
+//#define CAMERA_MODEL_DFRobot_FireBeetle2_ESP32S3
+//#define CAMERA_MODEL_DFRobot_Romeo_ESP32S3
+//#define CAMERA_MODEL_XENOIONEX
+//#define CAMERA_MODEL_Waveshare_ESP32_S3_ETH
+//#define CAMERA_MODEL_DFRobot_ESP32_S3_AI_CAM
 #endif
 #include "camera_pins.h"
 
