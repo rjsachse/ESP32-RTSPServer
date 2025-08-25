@@ -22,6 +22,7 @@
   #endif
 #endif
 
+// Logging macros
 #ifdef RTSP_LOGGING_ENABLED
   #define RTSP_LOGI(tag, format, ...) ESP_LOGI(tag, format, ##__VA_ARGS__)
   #define RTSP_LOGW(tag, format, ...) ESP_LOGW(tag, format, ##__VA_ARGS__)

@@ -1,6 +1,5 @@
-
-
 #include <WiFi.h>
+#include "RTSPConfig.h"
 #include <ESP32-RTSPServer.h>
 #include "esp_camera.h"
 
@@ -45,33 +44,25 @@
 // Enter your WiFi credentials
 // ===========================
 #ifndef SSID_NAME
-#define SSID_NAME = "**********";
+#define SSID_NAME "**********"
 #endif
-#ifndef SSID_PASWORD
-#define SSID_PASWORD = "**********";
+#ifndef SSID_PASSWORD
+#define SSID_PASSWORD "**********"
 #endif
 
 // RTSPServer instance
 RTSPServer rtspServer;
-
-// Can set a username and password for RTSP authentication or leave blank for no authentication
-#ifndef RTSP_USER
-#define RTSP_USER = "";
-#endif
-#ifndef RTSP_PASSWORD
-#define RTSP_PASSWORD = "";
-#endif
 
 // Variable to hold quality for RTSP frame
 int quality;
 // Task handles
 TaskHandle_t videoTaskHandle = NULL; 
 
-
 /** 
  * @brief Sets up the camera with the specified configuration. 
 */
-void setupCamera() {
+// Camera setup function
+bool setupCamera() {
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
@@ -127,8 +118,8 @@ void setupCamera() {
   // Initialize camera
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
-    Serial.printf("Camera init failed with error 0x%x", err);
-    return;
+    Serial.printf("Camera init failed with error 0x%x\n", err);
+    return false;
   }
 
   sensor_t *s = esp_camera_sensor_get();
@@ -152,6 +143,7 @@ void setupCamera() {
   s->set_vflip(s, 1);
 #endif
   Serial.println("Camera Setup Complete");
+  return true;
 }
 
 /** 
@@ -178,29 +170,15 @@ void sendVideo(void* pvParameters) {
   }
 }
 
-void onClientActivity(ClientActivityType activity, const char* clientIp, uint16_t clientPort, uint8_t activeClients) {
-  switch (activity) {
-    case ClientActivityType::CONNECTED:
-      Serial.printf("Client connected: %s:%d, Active clients: %d\n", clientIp, clientPort, activeClients);
-      break;
-    case ClientActivityType::DISCONNECTED:
-      Serial.printf("Client disconnected: %s:%d, Active clients: %d\n", clientIp, clientPort, activeClients);
-      if (activeClients == 0) {
-        Serial.println("All clients disconnected.");
-      }
-      break;
-    case ClientActivityType::REFUSED_MAX_CLIENTS:
-      Serial.printf("Client refused (max clients): %s:%d, Active clients: %d\n", clientIp, clientPort, activeClients);
-      break;
-  }
-}
-
 void setup() {
   // Initialize serial communication
   Serial.begin(115200);
 
+  // Set ESP32 core debug level to Info for verbose logging
+  esp_log_level_set("*", ESP_LOG_INFO);
+
   // Connect to WiFi
-  WiFi.begin(ssid, password);
+  WiFi.begin(SSID_NAME, SSID_PASSWORD);
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
     Serial.println("Connecting to WiFi...");
@@ -208,23 +186,20 @@ void setup() {
   Serial.println("Connected to WiFi");
 
   // Setup camera
-  setupCamera();
+  if (!setupCamera()) {
+    Serial.println("Camera setup failed. Halting.");
+    while (true);
+  }
   getFrameQuality();
-
+  
+  if (rtspServer.init()) { 
+    Serial.printf("RTSP server started successfully using default values, Connect to rtsp://%s:554/\n", WiFi.localIP().toString().c_str());
+  } else { 
+    Serial.println("Failed to start RTSP server"); 
+  }
+  
   // Create tasks for sending video, and subtitles
   xTaskCreate(sendVideo, "Video", 8192, NULL, 9, &videoTaskHandle);
-  
-  rtspServer.setClientActivityCallback(onClientActivity); // Register the client activity callback
-
-  rtspServer.maxRTSPClients = 5; // Set the maximum number of RTSP Multicast clients else enable OVERRIDE_RTSP_SINGLE_CLIENT_MODE to allow multiple clients for all transports eg. TCP, UDP, Multicast
-
-  rtspServer.setCredentials(rtspUser, rtspPassword); // Set RTSP authentication
-  
-  if (rtspServer.init()) {
-    Serial.println("RTSP server started successfully on port 554");
-  } else {
-    Serial.println("Failed to start RTSP server");
-  }
 }
 
 void loop() {

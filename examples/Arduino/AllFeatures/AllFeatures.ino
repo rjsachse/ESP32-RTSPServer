@@ -6,36 +6,42 @@
 // ===================
 // Select camera model
 // ===================
+// If CAMERA_MODEL is not defined by build flags, let user select here
 // User's ESP32 cam board
 #if defined(CONFIG_IDF_TARGET_ESP32)
-#define CAMERA_MODEL_AI_THINKER 
-//#define CAMERA_MODEL_WROVER_KIT 
-//#define CAMERA_MODEL_ESP_EYE 
-//#define CAMERA_MODEL_M5STACK_PSRAM 
-//#define CAMERA_MODEL_M5STACK_V2_PSRAM 
-//#define CAMERA_MODEL_M5STACK_WIDE 
-//#define CAMERA_MODEL_M5STACK_ESP32CAM
-//#define CAMERA_MODEL_M5STACK_UNITCAM
-//#define CAMERA_MODEL_TTGO_T_JOURNAL 
-//#define CAMERA_MODEL_ESP32_CAM_BOARD
-//#define CAMERA_MODEL_TTGO_T_CAMERA_PLUS
-//#define CAMERA_MODEL_UICPAL_ESP32
-//#define AUXILIARY
-
-// User's ESP32S3 cam board
+  #if defined(ARDUINO) && !defined(PLATFORMIO)
+    #define CAMERA_MODEL_AI_THINKER
+    // Uncomment ONE of the following to select your board:
+    //#define CAMERA_MODEL_WROVER_KIT 
+    //#define CAMERA_MODEL_ESP_EYE 
+    //#define CAMERA_MODEL_M5STACK_PSRAM 
+    //#define CAMERA_MODEL_M5STACK_V2_PSRAM 
+    //#define CAMERA_MODEL_M5STACK_WIDE 
+    //#define CAMERA_MODEL_M5STACK_ESP32CAM
+    //#define CAMERA_MODEL_M5STACK_UNITCAM
+    //#define CAMERA_MODEL_TTGO_T_JOURNAL 
+    //#define CAMERA_MODEL_ESP32_CAM_BOARD
+    //#define CAMERA_MODEL_TTGO_T_CAMERA_PLUS
+    //#define CAMERA_MODEL_UICPAL_ESP32
+    //#define AUXILIARY
+  #endif
+// User's ESP32-S3 cam board
 #elif defined(CONFIG_IDF_TARGET_ESP32S3)
-#define CAMERA_MODEL_FREENOVE_ESP32S3_CAM
-//#define CAMERA_MODEL_PCBFUN_ESP32S3_CAM
-//#define CAMERA_MODEL_XIAO_ESP32S3 
-//#define CAMERA_MODEL_NEW_ESPS3_RE1_0
-//#define CAMERA_MODEL_M5STACK_CAMS3_UNIT
-//#define CAMERA_MODEL_ESP32S3_EYE 
-//#define CAMERA_MODEL_ESP32S3_CAM_LCD
-//#define CAMERA_MODEL_DFRobot_FireBeetle2_ESP32S3
-//#define CAMERA_MODEL_DFRobot_Romeo_ESP32S3
-//#define CAMERA_MODEL_XENOIONEX
-//#define CAMERA_MODEL_Waveshare_ESP32_S3_ETH
-//#define CAMERA_MODEL_DFRobot_ESP32_S3_AI_CAM
+  #if defined(ARDUINO) && !defined(PLATFORMIO)
+    #define CAMERA_MODEL_FREENOVE_ESP32S3_CAM
+    // Uncomment ONE of the following to select your board:
+    //#define CAMERA_MODEL_PCBFUN_ESP32S3_CAM
+    //#define CAMERA_MODEL_XIAO_ESP32S3 
+    //#define CAMERA_MODEL_NEW_ESPS3_RE1_0
+    //#define CAMERA_MODEL_M5STACK_CAMS3_UNIT
+    //#define CAMERA_MODEL_ESP32S3_EYE 
+    //#define CAMERA_MODEL_ESP32S3_CAM_LCD
+    //#define CAMERA_MODEL_DFRobot_FireBeetle2_ESP32S3
+    //#define CAMERA_MODEL_DFRobot_Romeo_ESP32S3
+    //#define CAMERA_MODEL_XENOIONEX
+    //#define CAMERA_MODEL_Waveshare_ESP32_S3_ETH
+    //#define CAMERA_MODEL_DFRobot_ESP32_S3_AI_CAM
+  #endif
 #endif
 #include "camera_pins.h"
 
@@ -43,10 +49,10 @@
 // Enter your WiFi credentials
 // ===========================
 #ifndef SSID_NAME
-#define SSID_NAME = "**********";
+#define SSID_NAME "**********"
 #endif
-#ifndef SSID_PASWORD
-#define SSID_PASWORD = "**********";
+#ifndef SSID_PASSWORD
+#define SSID_PASSWORD "**********"
 #endif
 
 // RTSPServer instance
@@ -54,10 +60,10 @@ RTSPServer rtspServer;
 
 // Can set a username and password for RTSP authentication or leave blank for no authentication
 #ifndef RTSP_USER
-#define RTSP_USER = "";
+#define RTSP_USER ""
 #endif
 #ifndef RTSP_PASSWORD
-#define RTSP_PASSWORD = "";
+#define RTSP_PASSWORD ""
 #endif
 
 // Define HAVE_AUDIO to include audio-related code
@@ -69,9 +75,10 @@ RTSPServer rtspServer;
 I2SClass I2S;
 
 // I2S pins configuration
-#define I2S_SCK          4  // Serial Clock (SCK) or Bit Clock (BCLK)
-#define I2S_WS           5  // Word Select (WS) or Left Right Clock (LRCLK)
-#define I2S_SDI          6  // Serial Data In (Mic)
+#define I2S_SCK          3   // Serial Clock (SCK) or Bit Clock (BCLK)
+#define I2S_WS           46  // Word Select (WS) or Left Right Clock (LRCLK)
+#define I2S_SDI          45  // Serial Data In (Mic)
+#define I2S_SD0          0   // Serial Data Out (Amp)
 
 // Audio variables
 int sampleRate = 16000;      // Sample rate in Hz
@@ -264,6 +271,23 @@ void onSubtitles(void* arg) {
   }
 }
 
+void onClientActivity(ClientActivityType activity, const char* clientIp, uint16_t clientPort, uint8_t activeClients) {
+  switch (activity) {
+    case ClientActivityType::CONNECTED:
+      Serial.printf("Client connected: %s:%d, Active clients: %d\n", clientIp, clientPort, activeClients);
+      break;
+    case ClientActivityType::DISCONNECTED:
+      Serial.printf("Client disconnected: %s:%d, Active clients: %d\n", clientIp, clientPort, activeClients);
+      if (activeClients == 0) {
+        Serial.println("All clients disconnected.");
+      }
+      break;
+    case ClientActivityType::REFUSED_MAX_CLIENTS:
+      Serial.printf("Client refused (max clients): %s:%d, Active clients: %d\n", clientIp, clientPort, activeClients);
+      break;
+  }
+}
+
 void printDeviceInfo() {
   // Local function to format size
   auto fmtSize = [](size_t bytes) -> String {
@@ -325,7 +349,7 @@ void setup() {
   Serial.begin(115200);
 
   // Connect to WiFi
-  WiFi.begin(ssid, password);
+  WiFi.begin(SSID_NAME, SSID_PASSWORD);
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
     Serial.println("Connecting to WiFi...");
@@ -358,7 +382,9 @@ void setup() {
 
   rtspServer.maxRTSPClients = 5; // Set the maximum number of RTSP Multicast clients else enable OVERRIDE_RTSP_SINGLE_CLIENT_MODE to allow multiple clients for all transports eg. TCP, UDP, Multicast
 
-  rtspServer.setCredentials(rtspUser, rtspPassword); // Set RTSP authentication
+  rtspServer.setCredentials(RTSP_USER, RTSP_PASSWORD); // Set RTSP authentication
+
+  rtspServer.setClientActivityCallback(onClientActivity); // Register the client activity callback
 
   // Initialize the RTSP server
   /**

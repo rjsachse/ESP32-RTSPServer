@@ -6,44 +6,54 @@
 // ===================
 // Select camera model
 // ===================
+// If CAMERA_MODEL is not defined by build flags, let user select here
 // User's ESP32 cam board
 #if defined(CONFIG_IDF_TARGET_ESP32)
-#define CAMERA_MODEL_AI_THINKER 
-//#define CAMERA_MODEL_WROVER_KIT 
-//#define CAMERA_MODEL_ESP_EYE 
-//#define CAMERA_MODEL_M5STACK_PSRAM 
-//#define CAMERA_MODEL_M5STACK_V2_PSRAM 
-//#define CAMERA_MODEL_M5STACK_WIDE 
-//#define CAMERA_MODEL_M5STACK_ESP32CAM
-//#define CAMERA_MODEL_M5STACK_UNITCAM
-//#define CAMERA_MODEL_TTGO_T_JOURNAL 
-//#define CAMERA_MODEL_ESP32_CAM_BOARD
-//#define CAMERA_MODEL_TTGO_T_CAMERA_PLUS
-//#define CAMERA_MODEL_UICPAL_ESP32
-//#define AUXILIARY
-
-// User's ESP32S3 cam board
+  #if defined(ARDUINO) && !defined(PLATFORMIO)
+    #define CAMERA_MODEL_AI_THINKER
+    // Uncomment ONE of the following to select your board:
+    //#define CAMERA_MODEL_WROVER_KIT 
+    //#define CAMERA_MODEL_ESP_EYE 
+    //#define CAMERA_MODEL_M5STACK_PSRAM 
+    //#define CAMERA_MODEL_M5STACK_V2_PSRAM 
+    //#define CAMERA_MODEL_M5STACK_WIDE 
+    //#define CAMERA_MODEL_M5STACK_ESP32CAM
+    //#define CAMERA_MODEL_M5STACK_UNITCAM
+    //#define CAMERA_MODEL_TTGO_T_JOURNAL 
+    //#define CAMERA_MODEL_ESP32_CAM_BOARD
+    //#define CAMERA_MODEL_TTGO_T_CAMERA_PLUS
+    //#define CAMERA_MODEL_UICPAL_ESP32
+    //#define AUXILIARY
+  #endif
+// User's ESP32-S3 cam board
 #elif defined(CONFIG_IDF_TARGET_ESP32S3)
-#define CAMERA_MODEL_FREENOVE_ESP32S3_CAM
-//#define CAMERA_MODEL_PCBFUN_ESP32S3_CAM
-//#define CAMERA_MODEL_XIAO_ESP32S3 
-//#define CAMERA_MODEL_NEW_ESPS3_RE1_0
-//#define CAMERA_MODEL_M5STACK_CAMS3_UNIT
-//#define CAMERA_MODEL_ESP32S3_EYE 
-//#define CAMERA_MODEL_ESP32S3_CAM_LCD
-//#define CAMERA_MODEL_DFRobot_FireBeetle2_ESP32S3
-//#define CAMERA_MODEL_DFRobot_Romeo_ESP32S3
-//#define CAMERA_MODEL_XENOIONEX
-//#define CAMERA_MODEL_Waveshare_ESP32_S3_ETH
-//#define CAMERA_MODEL_DFRobot_ESP32_S3_AI_CAM
+  #if defined(ARDUINO) && !defined(PLATFORMIO)
+    #define CAMERA_MODEL_FREENOVE_ESP32S3_CAM
+    // Uncomment ONE of the following to select your board:
+    //#define CAMERA_MODEL_PCBFUN_ESP32S3_CAM
+    //#define CAMERA_MODEL_XIAO_ESP32S3 
+    //#define CAMERA_MODEL_NEW_ESPS3_RE1_0
+    //#define CAMERA_MODEL_M5STACK_CAMS3_UNIT
+    //#define CAMERA_MODEL_ESP32S3_EYE 
+    //#define CAMERA_MODEL_ESP32S3_CAM_LCD
+    //#define CAMERA_MODEL_DFRobot_FireBeetle2_ESP32S3
+    //#define CAMERA_MODEL_DFRobot_Romeo_ESP32S3
+    //#define CAMERA_MODEL_XENOIONEX
+    //#define CAMERA_MODEL_Waveshare_ESP32_S3_ETH
+    //#define CAMERA_MODEL_DFRobot_ESP32_S3_AI_CAM
+  #endif
 #endif
 #include "camera_pins.h"
 
 // ===========================
 // Enter your WiFi credentials
 // ===========================
-const char *ssid = "**********";
-const char *password = "**********";
+#ifndef SSID_NAME
+#define SSID_NAME "**********"
+#endif
+#ifndef SSID_PASSWORD
+#define SSID_PASSWORD "**********"
+#endif
 
 // RTSPServer instance
 RTSPServer rtspServer;
@@ -169,11 +179,8 @@ void setup() {
   // Initialize serial communication
   Serial.begin(115200);
 
-  // Set ESP32 core debug level to Info for verbose logging
-  esp_log_level_set("*", ESP_LOG_INFO);
-
   // Connect to WiFi
-  WiFi.begin(ssid, password);
+  WiFi.begin(SSID_NAME, SSID_PASSWORD);
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
     Serial.println("Connecting to WiFi...");
