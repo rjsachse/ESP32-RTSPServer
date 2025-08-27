@@ -5,10 +5,19 @@
 #include "lwip/sockets.h"
 #include <esp_log.h>
 #include <map>
+#include <algorithm>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include "codecs/g7xx/g72x.h"
+#ifdef __cplusplus
+}
+#endif
 
 #define MAX_RTSP_BUFFER (512 * 1024)
-#define RTP_STACK_SIZE (1024 * 8)
-#define RTP_PRI 10
+#define RTP_STACK_SIZE (1024 * 4)
+#define RTP_PRI 5
 #define RTSP_STACK_SIZE (1024 * 8)
 #define RTSP_PRI 10
 #define MAX_CLIENTS 10 // max rtsp clients
@@ -20,6 +29,10 @@
   #if __has_include("RTSPConfig.h")
     #include "RTSPConfig.h"
   #endif
+#endif
+
+#ifdef USE_SPEEXDSP
+#include <ESP32-SpeexDSP.h>
 #endif
 
 #ifdef RTSP_LOGGING_ENABLED
@@ -49,6 +62,7 @@ struct RTSP_Session {
   bool isHttp;  // Add flag for HTTP tunneling
   int httpSock;  // Add HTTP socket storage
   char sessionCookie[MAX_COOKIE_LENGTH];  // Add storage for session cookie
+  uint16_t cAudioIPort;  // Add client port for incoming audio
 };
 
 class RTSPServer {
@@ -64,10 +78,16 @@ public:
     NONE,
   };
 
+  enum AudioCodec {
+    G711_ULAW,  // G.711 μ-law (payload type 0)
+    G711_ALAW,  // G.711 A-law (payload type 8)
+    L16         // 16-bit PCM, big-endian (payload type 97)
+  };
+
   RTSPServer();  // Defined in ESP32-RTSPServer.cpp
   ~RTSPServer();  // Destructor, defined in ESP32-RTSPServer.cpp
 
-  bool init(TransportType transport = NONE, uint16_t rtspPort = 0, uint32_t sampleRate = 0, uint16_t port1 = 0, uint16_t port2 = 0, uint16_t port3 = 0, IPAddress rtpIp = IPAddress(), uint8_t rtpTTL = 255);  // Defined in ESP32-RTSPServer.cpp
+  bool init(TransportType transport = NONE, uint16_t rtspPort = 0, uint32_t sampleRate = 0, uint16_t port1 = 0, uint16_t port2 = 0, uint16_t port3 = 0, IPAddress rtpIp = IPAddress(), uint8_t rtpTTL = 255, AudioCodec outCodec = G711_ULAW, AudioCodec inCodec = G711_ULAW);  // Defined in ESP32-RTSPServer.cpp
   
   void deinit();  // Defined in ESP32-RTSPServer.cpp
 
@@ -89,6 +109,31 @@ public:
 
   bool setCredentials(const char* username, const char* password); // Add method to set credentials
 
+  // Function to set the callback for received audio
+  void setAudioReceiveCallback(void (*callback)(const uint8_t*, size_t));
+
+    // G.711 Codec
+    void decodeG711(uint8_t* inG711, int16_t* out, int numSamples, bool ulaw = true);
+    void encodeG711(int16_t* in, uint8_t* outG711, int numSamples, bool ulaw = true);
+
+    // RTP Parsing
+    struct RTPPacket {
+        uint8_t version;
+        bool padding;
+        bool extension;
+        uint8_t csrcCount;
+        bool marker;
+        uint8_t payloadType;
+        uint16_t sequenceNumber;
+        uint32_t timestamp;
+        uint32_t ssrc;
+        uint8_t* payload;
+        int payloadLen;
+    };
+    bool parseRTPPacket(uint8_t* packet, int packetLen, RTPPacket& rtp);
+
+    float computeRMS(int16_t *data, int len);
+
   uint32_t rtpFps;
   TransportType transport;
   uint32_t sampleRate;
@@ -97,21 +142,28 @@ public:
   uint8_t rtpTTL;
   uint16_t rtpVideoPort;
   uint16_t rtpAudioPort;
+  uint16_t rtpAudioIPort;
   uint16_t rtpSubtitlesPort;
   uint8_t maxRTSPClients;
+#ifdef USE_SPEEXDSP
+  ESP32SpeexDSP audioProcessor;  // Only included if USE_SPEEXDSP is defined
+#endif
 
 private:
   int rtspSocket;
   int videoUnicastSocket; 
   int audioUnicastSocket; 
+  int audioIUnicastSocket; 
   int subtitlesUnicastSocket; 
   int videoMulticastSocket; 
   int audioMulticastSocket; 
+  int audioIMulticastSocket;  // Add socket for incoming audio (multicast)
   int subtitlesMulticastSocket;
   uint8_t activeRTSPClients; 
   uint8_t maxClients;
   TaskHandle_t rtpVideoTaskHandle;
   TaskHandle_t rtspTaskHandle;
+  TaskHandle_t rtpAudioITaskHandle;  // Add task handle for incoming audio
   std::map<uint32_t, RTSP_Session> sessions;
   byte* rtspStreamBuffer;
   size_t rtspStreamBufferSize;
@@ -134,6 +186,7 @@ private:
   uint32_t lastRtpFPSUpdateTime;
   uint8_t videoCh;
   uint8_t audioCh;
+  uint8_t audioICh;  // Add channel for incoming audio
   uint8_t subtitlesCh;
   bool isVideo;
   bool isAudio;
@@ -144,6 +197,8 @@ private:
   bool firstClientIsTCP;
   bool authEnabled; // Flag to indicate if authentication is enabled
   char base64Credentials[128]; // Store base64 encoded credentials
+  AudioCodec audioOutCodec;  // Codec for outgoing audio
+  AudioCodec audioInCodec;   // Codec for incoming audio
   esp_timer_handle_t sendSubtitlesTimer;
   SemaphoreHandle_t isPlayingMutex;  // Mutex for protecting access
   SemaphoreHandle_t sendTcpMutex;  // Mutex for protecting TCP send access
@@ -157,13 +212,18 @@ private:
 
   void sendRtpSubtitles(const char* data, size_t len, int sock, uint16_t sendRtpPort, bool useTCP, bool isMulticast);  // Defined in rtp.cpp
 
-  void sendRtpAudio(const int16_t* data, size_t len, int sock, uint16_t sendRtpPort, bool useTCP, bool isMulticast);  // Defined in rtp.cpp
+  //void sendRtpAudio(const int16_t* data, size_t len, int sock, uint16_t sendRtpPort, bool useTCP, bool isMulticast);  // Defined in rtp.cpp
+  void sendRtpAudio(const uint8_t* data, size_t len, int sock, uint16_t sendRtpPort, bool useTCP, bool isMulticast);  // Defined in rtp.cpp
 
   void sendRtpFrame(const uint8_t* data, size_t len, uint8_t quality, uint16_t width, uint16_t height, int sock, uint16_t sendRtpPort, bool useTCP, bool isMulticast);  // Defined in rtp.cpp
 
   static void rtpVideoTaskWrapper(void* pvParameters);  // Defined in rtp.cpp
 
   void rtpVideoTask();  // Defined in rtp.cpp
+
+  bool createAudioIn(); // Returns true if task starts, false if it fails
+  static void rtpAudioITaskWrapper(void* pvParameters);
+  void rtpAudioITask();
 
   void setMaxClients(uint8_t newMaxClients);  // Defined in utils.cpp
 
@@ -222,6 +282,14 @@ private:
   bool decodeBase64(const char* input, size_t inputLen, char* output, size_t* outputLen);
   void wrapInHTTP(char* buffer, size_t len, char* response, size_t maxLen);  // Add this line
   RTSP_Session* findSessionByCookie(const char* cookie);  // Add this line
+
+  void logRawAudioData(const uint8_t* data, size_t length);
+  void logAudioSamples(const char* label, int16_t* buffer, size_t len, size_t maxSamples);
+  
+  void sendReceivedAudioToMain(const uint8_t* l16Data, size_t len, void (*callback)(const uint8_t*, size_t));
+
+  void (*audioReceiveCallback)(const uint8_t*, size_t) = nullptr; // Callback for received audio
+
 };
 
 #endif // ESP32_RTSP_SERVER_H
