@@ -1,4 +1,5 @@
 #include <WiFi.h>
+#include "RTSPConfig.h"
 #include <ESP32-RTSPServer.h>
 #include "esp_camera.h"
 
@@ -42,8 +43,12 @@
 // ===========================
 // Enter your WiFi credentials
 // ===========================
-const char *ssid = "**********";
-const char *password = "**********";
+#ifndef SSID_NAME
+#define SSID_NAME "**********"
+#endif
+#ifndef SSID_PASSWORD
+#define SSID_PASSWORD "**********"
+#endif
 
 // RTSPServer instance
 RTSPServer rtspServer;
@@ -173,7 +178,7 @@ void setup() {
   esp_log_level_set("*", ESP_LOG_INFO);
 
   // Connect to WiFi
-  WiFi.begin(ssid, password);
+  WiFi.begin(SSID_NAME, SSID_PASSWORD);
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
     Serial.println("Connecting to WiFi...");

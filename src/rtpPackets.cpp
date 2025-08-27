@@ -9,18 +9,23 @@ void RTSPServer::rtpVideoTask() {
   while (true) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     bool multicastSent = false;
-    for (const auto& sessionPair : this->sessions) {
-      const RTSP_Session& session = sessionPair.second; 
-      if (session.isPlaying) {
-        if (session.isMulticast) {
-          if (!multicastSent) {
-            this->sendRtpFrame(this->rtspStreamBuffer, this->rtspStreamBufferSize, this->vQuality, this->vWidth, this->vHeight, session.sock, this->rtpVideoPort, false, true);
-            multicastSent = true;
+    if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
+      for (const auto& sessionPair : sessions) {
+        const RTSP_Session& session = sessionPair.second; 
+        if (session.isPlaying) {
+          if (session.isMulticast) {
+            if (!multicastSent) {
+              sendRtpFrame(rtspStreamBuffer, rtspStreamBufferSize, vQuality, vWidth, vHeight, session.sock, rtpVideoPort, false, true);
+              multicastSent = true;
+            }
+          } else {
+            sendRtpFrame(rtspStreamBuffer, rtspStreamBufferSize, vQuality, vWidth, vHeight, session.isHttp ? session.httpSock : session.sock, session.cVideoPort, session.isTCP, false);
           }
-        } else {
-          this->sendRtpFrame(this->rtspStreamBuffer, this->rtspStreamBufferSize, this->vQuality, this->vWidth, this->vHeight,  session.isHttp ? session.httpSock : session.sock, session.cVideoPort, session.isTCP, false);
         }
       }
+      xSemaphoreGive(sessionsMutex);
+    } else {
+      RTSP_LOGE(LOG_TAG, "Failed to acquire sessions mutex");
     }
     this->rtspStreamBufferSize = 0;
     this->rtpFrameSent = true;
@@ -57,18 +62,23 @@ void RTSPServer::sendRTSPFrame(const uint8_t* data, size_t len, int quality, int
   }
 #else
   bool multicastSent = false;
-  for (const auto& sessionPair : this->sessions) {
-    const RTSP_Session& session = sessionPair.second; 
-    if (session.isPlaying) {
-      if (session.isMulticast) {
-        if (!multicastSent) { 
-          sendRtpFrame(data, len, quality, width, height, session.sock, this->rtpVideoPort, false, true); 
-          multicastSent = true; 
+  if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
+    for (const auto& sessionPair : sessions) {
+      const RTSP_Session& session = sessionPair.second; 
+      if (session.isPlaying) {
+        if (session.isMulticast) {
+          if (!multicastSent) { 
+            sendRtpFrame(data, len, quality, width, height, session.sock, rtpVideoPort, false, true); 
+            multicastSent = true; 
+          }
+        } else {
+          sendRtpFrame(data, len, quality, width, height, session.isHttp ? session.httpSock : session.sock, session.cVideoPort, session.isTCP, false);
         }
-      } else {
-        sendRtpFrame(data, len, quality, width, height,  session.isHttp ? session.httpSock : session.sock, session.cVideoPort, session.isTCP, false);
       }
     }
+    xSemaphoreGive(sessionsMutex);
+  } else {
+    RTSP_LOGE(LOG_TAG, "Failed to acquire sessions mutex");
   }
   this->rtpFrameSent = true;
   lastSendTime = currentTime;
@@ -269,26 +279,30 @@ void RTSPServer::sendRTSPAudio(int16_t* data, size_t len) {
 #else
   if (true) {
 #endif
-    rtpAudioSent = false;
-    bool multicastSent = false;
+  rtpAudioSent = false;
+  bool multicastSent = false;
+  if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
     for (const auto& sessionPair : sessions) {
-      const RTSP_Session& session = sessionPair.second;
+      const RTSP_Session& session = sessionPair.second; 
       if (session.isPlaying) {
         if (session.isMulticast) {
           if (!multicastSent) {
-            sendRtpAudio(rtpData, rtpLen, session.sock, rtpAudioPort, false, true);
+            sendRtpAudio(data, len, session.sock, rtpAudioPort, false, true);
             multicastSent = true;
           }
         } else {
-          sendRtpAudio(rtpData, rtpLen, session.isHttp ? session.httpSock : session.sock, 
-                       session.cAudioPort, session.isTCP, false);
+          sendRtpAudio(data, len, session.isHttp ? session.httpSock : session.sock, session.cAudioPort, session.isTCP, false);
         }
       }
     }
-    rtpAudioSent = true;
+    xSemaphoreGive(sessionsMutex);
+  } else {
+    RTSP_LOGE(LOG_TAG, "Failed to acquire sessions mutex");
+  }
+  rtpAudioSent = true;  
   }
 }
-
+  
 // void RTSPServer::sendRTSPAudio(int16_t* data, size_t len) {
 //   this->rtpAudioSent = false;
 //   bool multicastSent = false;
@@ -309,22 +323,27 @@ void RTSPServer::sendRTSPAudio(int16_t* data, size_t len) {
 // }
 
 void RTSPServer::sendRTSPSubtitles(char* data, size_t len) {
-  this->rtpSubtitlesSent = false;
+  rtpSubtitlesSent = false;
   bool multicastSent = false;
-  for (const auto& sessionPair : this->sessions) {
-    const RTSP_Session& session = sessionPair.second; 
-    if (session.isPlaying) {
-      if (session.isMulticast) {
+  if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
+    for (const auto& sessionPair : sessions) {
+      const RTSP_Session& session = sessionPair.second; 
+      if (session.isPlaying) {
+        if (session.isMulticast) {
           if (!multicastSent) {
-            this->sendRtpSubtitles(data, len, session.sock, this->rtpSubtitlesPort, false, true);
+            sendRtpSubtitles(data, len, session.sock, rtpSubtitlesPort, false, true);
             multicastSent = true;
+          }
+        } else {
+          sendRtpSubtitles(data, len, session.isHttp ? session.httpSock : session.sock, session.cSrtPort, session.isTCP, false);
         }
-      } else {
-        this->sendRtpSubtitles(data, len,  session.isHttp ? session.httpSock : session.sock, session.cSrtPort, session.isTCP, false);
       }
     }
+    xSemaphoreGive(sessionsMutex);
+  } else {
+    RTSP_LOGE(LOG_TAG, "Failed to acquire sessions mutex");
   }
-  this->rtpSubtitlesSent = true;
+  rtpSubtitlesSent = true;
 }
 
 void RTSPServer::sendRtpFrame(const uint8_t* data, size_t len, uint8_t quality, uint16_t width, uint16_t height, int sock, uint16_t sendRtpPort, bool useTCP, bool isMulticast) {

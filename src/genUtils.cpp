@@ -41,34 +41,56 @@ uint8_t RTSPServer::getMaxClients() {
 }
 
 void RTSPServer::incrementActiveRTSPClients() {
-  if (this->activeRTSPClients < 255) {
-    this->activeRTSPClients++;
-    RTSP_LOGI(LOG_TAG, "Active RTSP clients count incremented: %d", this->activeRTSPClients);
+  if (xSemaphoreTake(maxClientsMutex, portMAX_DELAY) == pdTRUE) {
+    if (this->activeRTSPClients < 255) {
+      this->activeRTSPClients++;
+      RTSP_LOGI(LOG_TAG, "Active RTSP clients count incremented: %d", this->activeRTSPClients);
+    } else {
+      RTSP_LOGW(LOG_TAG, "Max RTSP clients reached: %d", 255);
+    }
+    xSemaphoreGive(maxClientsMutex);
   } else {
-    RTSP_LOGW(LOG_TAG, "Max RTSP clients reached: %d", 255);
+    RTSP_LOGE(LOG_TAG, "Failed to acquire maxClients mutex");
   }
 }
 
 void RTSPServer::decrementActiveRTSPClients() {
-  if (this->activeRTSPClients > 0) {
-    this->activeRTSPClients--;
-    RTSP_LOGI(LOG_TAG, "Active RTSP clients count decremented: %d", this->activeRTSPClients);
+  if (xSemaphoreTake(maxClientsMutex, portMAX_DELAY) == pdTRUE) {
+    if (this->activeRTSPClients > 0) {
+      this->activeRTSPClients--;
+      RTSP_LOGI(LOG_TAG, "Active RTSP clients count decremented: %d", this->activeRTSPClients);
+    } else {
+      RTSP_LOGW(LOG_TAG, "Min RTSP clients already: %d", 0);
+    }
+    xSemaphoreGive(maxClientsMutex);
   } else {
-    RTSP_LOGW(LOG_TAG, "Min RTSP clients already: %d", 0);
+    RTSP_LOGE(LOG_TAG, "Failed to acquire maxClients mutex");
   }
 }
 
 uint8_t RTSPServer::getActiveRTSPClients() {
-  return this->activeRTSPClients;
+  uint8_t clients = 0;
+  if (xSemaphoreTake(maxClientsMutex, portMAX_DELAY) == pdTRUE) {
+    clients = this->activeRTSPClients;
+    xSemaphoreGive(maxClientsMutex);
+  } else {
+    RTSP_LOGE(LOG_TAG, "Failed to acquire maxClients mutex");
+  }
+  return clients;
 }
 
 void RTSPServer::updateIsPlayingStatus() {
   bool anyClientStreaming = false;
-  for (const auto& sessionPair : sessions) {
-    if (sessionPair.second.isPlaying) {
-      anyClientStreaming = true;
-      break;
+  if (xSemaphoreTake(sessionsMutex, portMAX_DELAY) == pdTRUE) {
+    for (const auto& sessionPair : sessions) {
+      if (sessionPair.second.isPlaying) {
+        anyClientStreaming = true;
+        break;
+      }
     }
+    xSemaphoreGive(sessionsMutex);
+  } else {
+    RTSP_LOGE(LOG_TAG, "Failed to acquire sessions mutex");
   }
   setIsPlaying(anyClientStreaming);
 }
