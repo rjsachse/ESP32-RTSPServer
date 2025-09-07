@@ -262,7 +262,7 @@ void RTSPServer::sendRTSPAudio(int16_t* data, size_t len) {
         RTSP_LOGE(LOG_TAG, "Input too large for G.711 buffer");
         return;
       }
-      encodeG711(processed, g711OutBuf, numSamples, audioOutCodec == G711_ULAW);
+      encodeG711(processed, g711OutBuf, numSamples, audioOutCodec);
       rtpData = g711OutBuf;
       rtpLen = numSamples;
       break;
@@ -287,11 +287,11 @@ void RTSPServer::sendRTSPAudio(int16_t* data, size_t len) {
       if (session.isPlaying) {
         if (session.isMulticast) {
           if (!multicastSent) {
-            sendRtpAudio(data, len, session.sock, rtpAudioPort, false, true);
+            sendRtpAudio(rtpData, rtpLen, session.sock, rtpAudioPort, false, true);
             multicastSent = true;
           }
         } else {
-          sendRtpAudio(data, len, session.isHttp ? session.httpSock : session.sock, session.cAudioPort, session.isTCP, false);
+          sendRtpAudio(rtpData, rtpLen, session.isHttp ? session.httpSock : session.sock, session.cAudioPort, session.isTCP, false);
         }
       }
     }

@@ -1,11 +1,9 @@
 #include "ESP32-RTSPServer.h"
-//#include "audioConverter.h"
 
 const char* RTSPServer::LOG_TAG = "RTSPServer";
 
 RTSPServer::RTSPServer()
   : rtpFps(0),
-    // User can change these settings
     transport(VIDEO_AND_SUBTITLES), // Default transport 
     sampleRate(0),
     rtspPort(554),
@@ -16,7 +14,6 @@ RTSPServer::RTSPServer()
     rtpAudioIPort(5436),
     rtpSubtitlesPort(5434),
     maxRTSPClients(3),
-    //
     rtspSocket(-1),
     videoUnicastSocket(-1),
     audioUnicastSocket(-1), 
@@ -57,9 +54,9 @@ RTSPServer::RTSPServer()
     firstClientConnected(false),
     firstClientIsMulticast(false),
     firstClientIsTCP(false),
-    authEnabled(false), // Reordered initialization
-    audioOutCodec(L16),      // Default output: L16
-    audioInCodec(G711_ULAW) // Default input: G.711 μ-law
+    authEnabled(false),
+    audioOutCodec(L16),      // Default output: L16 (PCM) for audio streamed from ESP32 (mic) to client
+    audioInCodec(G711_ULAW) // Default input: G.711 μ-law for audio received from client to ESP32 (speaker)
 {
     isPlayingMutex = xSemaphoreCreateMutex(); // Initialize the mutex
     sendTcpMutex = xSemaphoreCreateMutex(); // Initialize the mutex
@@ -104,8 +101,8 @@ bool RTSPServer::init(TransportType transport, uint16_t rtspPort, uint32_t sampl
   this->rtspPort = (rtspPort != 0) ? rtspPort : this->rtspPort;
   this->rtpIp = (rtpIp != IPAddress()) ? rtpIp : this->rtpIp;
   this->rtpTTL = (rtpTTL != 255) ? rtpTTL : this->rtpTTL;
-  this->audioOutCodec = outCodec;
-  this->audioInCodec = inCodec;
+  this->audioOutCodec = (outCodec != this->audioOutCodec) ? outCodec : this->audioOutCodec;
+  this->audioInCodec = (inCodec != this->audioInCodec) ? inCodec : this->audioInCodec;
 
   if (transport == AUDIO_ONLY || transport == VIDEO_AND_AUDIO || transport == AUDIO_AND_SUBTITLES || transport == VIDEO_AUDIO_SUBTITLES) {
     if (this->sampleRate == 0 && sampleRate == 0) {
@@ -515,8 +512,6 @@ void RTSPServer::rtspTask() {
   }
 }
 
-
-
 void RTSPServer::logRawAudioData(const uint8_t* data, size_t length) {
   char logBuffer[1024]; // Adjust size as needed
   size_t index = 0;
@@ -528,7 +523,6 @@ void RTSPServer::logRawAudioData(const uint8_t* data, size_t length) {
   logBuffer[index] = '\0'; // Null-terminate the string
   RTSP_LOGI(LOG_TAG, "Audio Data (Hex): %s", logBuffer);
 }
-
 
 // Helper function to log audio samples
 void RTSPServer::logAudioSamples(const char* label, int16_t* buffer, size_t len, size_t maxSamples) {
@@ -542,58 +536,6 @@ void RTSPServer::logAudioSamples(const char* label, int16_t* buffer, size_t len,
   }
   RTSP_LOGI(LOG_TAG, "%s", logStr);
 }
-// void RTSPServer::rtpAudioITask() {
-//   uint8_t* rtpBuffer = (uint8_t*)malloc(1500);           // Buffer for incoming RTP packets
-//   int16_t* processedBuffer = (int16_t*)malloc(256 * sizeof(int16_t)); // Buffer for processed audio
-
-//   if (!rtpBuffer || !processedBuffer) {
-//     RTSP_LOGE(LOG_TAG, "Failed to allocate memory");
-//     free(rtpBuffer); free(processedBuffer);
-//     vTaskDelete(NULL);
-//     return;
-//   }
-
-//   struct sockaddr_in srcAddr;
-//   socklen_t addrLen = sizeof(srcAddr);
-
-//   while (true) {
-//     int len = recvfrom(this->audioIUnicastSocket, rtpBuffer, 1500, 0, (struct sockaddr*)&srcAddr, &addrLen);
-//     if (len > 0) {
-//       ESP32SpeexDSP::RTPPacket rtp;
-//       if (audioProcessor.parseRTPPacket(rtpBuffer, len, rtp)) {
-//         int16_t* pcm8k = (int16_t*)malloc(rtp.payloadLen * sizeof(int16_t));
-//         audioProcessor.decodeG711(rtp.payload, pcm8k, rtp.payloadLen, true); // Decode G.711 to PCM (μ-law)
-//         int16_t* pcm16k = (int16_t*)malloc(rtp.payloadLen * 2 * sizeof(int16_t));
-//         int resampledLen = audioProcessor.resample(pcm8k, rtp.payloadLen, pcm16k, rtp.payloadLen * 2); // Resample to 16 kHz
-
-//         for (int i = 0; i < resampledLen; i += 256) {
-//           int chunkSize = min(256, resampledLen - i); // chunkSize in samples
-//           memcpy(processedBuffer, pcm16k + i, chunkSize * sizeof(int16_t));
-
-//           // Speaker-specific preprocessing (NS/AGC if enabled)
-//           audioProcessor.preprocessSpeakerAudio(processedBuffer);
-
-//           // Store for AEC reference
-//           audioProcessor.writeBuffer(processedBuffer, chunkSize);
-
-//           // Send to speaker as uint8_t* with length in bytes
-//           if (this->audioReceiveCallback) {
-//             size_t byteLen = chunkSize * sizeof(int16_t); // Convert samples to bytes
-//             sendReceivedAudioToMain((uint8_t*)processedBuffer, byteLen, this->audioReceiveCallback);
-//           }
-//         }
-//         free(pcm8k);
-//         free(pcm16k);
-//       } else {
-//         RTSP_LOGE(LOG_TAG, "Failed to parse RTP packet");
-//       }
-//     } else {
-//       vTaskDelay(10 / portTICK_PERIOD_MS);
-//     }
-//   }
-//   free(rtpBuffer);
-//   free(processedBuffer);
-// }
 
 bool RTSPServer::createAudioIn() {
   if (this->rtpAudioITaskHandle == NULL) {
@@ -620,141 +562,6 @@ void RTSPServer::rtpAudioITaskWrapper(void* pvParameters) {
   RTSP_LOGI(LOG_TAG, "Audio in task wrapper exiting"); // Shouldn’t reach here
   vTaskDelete(NULL);
 }
-
-// void RTSPServer::rtpAudioITask() {
-//   RTSP_LOGI(LOG_TAG, "Audio in task started");
-
-//   uint8_t* rtpBuffer = (uint8_t*)malloc(1500); // Buffer for incoming RTP packets
-//   if (!rtpBuffer) {
-//     RTSP_LOGE(LOG_TAG, "Failed to allocate memory for rtpBuffer: %u bytes", 1500);
-//     vTaskDelete(NULL); // No free() needed, malloc failed
-//     return;
-//   }
-//   RTSP_LOGI(LOG_TAG, "Allocated rtpBuffer of size: %zu", 1500);
-//   RTSP_LOGI(LOG_TAG, "AudioIUnicastSocket: %d", this->audioIUnicastSocket);
-
-//   struct sockaddr_in srcAddr;
-//   socklen_t addrLen = sizeof(srcAddr);
-
-//   while (true) {
-//     int len = recvfrom(this->audioIUnicastSocket, rtpBuffer, 1500, 0, (struct sockaddr*)&srcAddr, &addrLen);
-//     if (len > 0) {
-//       RTSP_LOGI(LOG_TAG, "Received RTP packet of length: %d", len);
-
-//       RTPPacket rtp;
-//       if (parseRTPPacket(rtpBuffer, len, rtp)) {
-//         RTSP_LOGI(LOG_TAG, "Parsed RTP: payloadLen=%d, timestamp=%u", rtp.payloadLen, rtp.timestamp);
-
-//         size_t inputSamples = rtp.payloadLen;
-//         int16_t* pcm8k = (int16_t*)malloc(inputSamples * sizeof(int16_t));
-//         if (!pcm8k) {
-//           RTSP_LOGE(LOG_TAG, "Failed to allocate pcm8k");
-//           free(pcm8k);
-//           continue;
-//         }
-//         decodeG711(rtp.payload, pcm8k, inputSamples, true);
-//         RTSP_LOGI(LOG_TAG, "Decoded G.711: %d samples", inputSamples);
-
-//         size_t maxOutputSamples = inputSamples * 2;
-//         int16_t* pcm16k = (int16_t*)malloc(maxOutputSamples * sizeof(int16_t));
-//         if (!pcm16k) {
-//           RTSP_LOGE(LOG_TAG, "Failed to allocate pcm16k");
-//           free(pcm8k);
-//           free(pcm16k);
-//           continue;
-//         }
-//         int resampledLen = audioProcessor.resample(pcm8k, inputSamples, pcm16k, maxOutputSamples);
-//         RTSP_LOGI(LOG_TAG, "Resampled to 16 kHz: %d samples", resampledLen);
-
-//         size_t chunkSizeBytes = 1024;
-//         size_t chunkSizeSamples = chunkSizeBytes / sizeof(int16_t); // 512 samples
-//         int16_t processedBuffer[512];
-
-//         for (size_t i = 0; i < resampledLen; i += chunkSizeSamples) {
-//           size_t samplesToProcess = std::min(chunkSizeSamples, resampledLen - i);
-//           size_t bytesToProcess = samplesToProcess * sizeof(int16_t);
-
-//           memcpy(processedBuffer, pcm16k + i, bytesToProcess);
-//           audioProcessor.preprocessSpeakerAudio(processedBuffer);
-//           audioProcessor.writeBuffer(processedBuffer, samplesToProcess);
-
-//           if (this->audioReceiveCallback) {
-//             RTSP_LOGI(LOG_TAG, "Sending to callback: %d bytes", bytesToProcess);
-//             sendReceivedAudioToMain((uint8_t*)processedBuffer, bytesToProcess, this->audioReceiveCallback);
-//           } else {
-//             RTSP_LOGE(LOG_TAG, "No audioReceiveCallback set");
-//           }
-//         }
-
-//         free(pcm8k);
-//         free(pcm16k);
-//       } else {
-//         RTSP_LOGE(LOG_TAG, "Failed to parse RTP packet");
-//       }
-//     } else if (len == 0) {
-//       RTSP_LOGI(LOG_TAG, "Received empty packet");
-//       vTaskDelay(10 / portTICK_PERIOD_MS);
-//     } else {
-//       //RTSP_LOGE(LOG_TAG, "recvfrom failed: %d", len);
-//       vTaskDelay(10 / portTICK_PERIOD_MS);
-//     }
-//   }
-//   free(rtpBuffer);
-//   RTSP_LOGI(LOG_TAG, "Audio in task exiting"); // Shouldn’t reach here
-// }
-
-// Receive and process incoming audio (Updated)
-// void RTSPServer::rtpAudioITask() {
-//   RTSP_LOGI(LOG_TAG, "Audio in task started");
-//   uint8_t* rtpBuffer = (uint8_t*)malloc(1500);
-//   if (!rtpBuffer) {
-//     RTSP_LOGE(LOG_TAG, "Failed to allocate rtpBuffer");
-//     return;
-//   }
-
-//   struct sockaddr_in srcAddr;
-//   socklen_t addrLen = sizeof(srcAddr);
-
-//   while (true) {
-//     int len = recvfrom(this->audioIUnicastSocket, rtpBuffer, 1500, 0, (struct sockaddr*)&srcAddr, &addrLen);
-//     if (len > 0) {
-//       RTPPacket rtp;
-//       if (parseRTPPacket(rtpBuffer, len, rtp)) {
-//         size_t numSamples = (audioInCodec == L16) ? rtp.payloadLen / 2 : rtp.payloadLen;
-//         int16_t* pcm = (int16_t*)malloc(numSamples * sizeof(int16_t));
-//         if (!pcm) {
-//           RTSP_LOGE(LOG_TAG, "Failed to allocate pcm buffer");
-//           free(pcm);
-//           continue;
-//         }
-
-//         if (audioInCodec == G711_ULAW || audioInCodec == G711_ALAW) {
-//           decodeG711(rtp.payload, pcm, numSamples, audioInCodec == G711_ULAW);
-//         } else {  // L16
-//           for (size_t i = 0; i < numSamples; i++) {
-//             pcm[i] = (int16_t)((rtp.payload[i * 2] << 8) | rtp.payload[i * 2 + 1]);
-//           }
-//         }
-
-// #ifdef USE_SPEEXDSP
-//         audioProcessor.preprocessSpeakerAudio(pcm);
-//         audioProcessor.writeBuffer(pcm, numSamples);
-// #endif
-
-//         if (this->audioReceiveCallback) {
-//           sendReceivedAudioToMain((uint8_t*)pcm, numSamples * sizeof(int16_t), this->audioReceiveCallback);
-//         }
-
-//         free(pcm);
-//       } else {
-//         RTSP_LOGE(LOG_TAG, "Failed to parse RTP packet");
-//       }
-//     } else {
-//       vTaskDelay(10 / portTICK_PERIOD_MS);
-//     }
-//   }
-//   free(rtpBuffer);
-// }
 
 void RTSPServer::rtpAudioITask() {
   RTSP_LOGI(LOG_TAG, "Audio in task started");
@@ -848,96 +655,6 @@ void RTSPServer::rtpAudioITask() {
   free(rtpBuffer);
 }
 
-// void RTSPServer::rtpAudioITask() {
-//   RTSP_LOGI(LOG_TAG, "Audio in task started");
-//   static uint8_t rtpBuffer[1500];
-//   static int16_t pcm[256];
-//   struct sockaddr_in srcAddr;
-//   socklen_t addrLen = sizeof(srcAddr);
-
-//   while (true) {
-//     // Validate sockets
-//     if (audioIUnicastSocket < 0 && audioUnicastSocket < 0) {
-//       RTSP_LOGE(LOG_TAG, "No valid sockets");
-//       vTaskDelay(100 / portTICK_PERIOD_MS);
-//       continue;
-//     }
-
-//     // Use select() to monitor sockets
-//     fd_set readfds;
-//     FD_ZERO(&readfds);
-//     int max_fd = -1;
-//     if (audioIUnicastSocket >= 0) {
-//       FD_SET(audioIUnicastSocket, &readfds);
-//       max_fd = audioIUnicastSocket;
-//     }
-//     if (audioUnicastSocket >= 0) {
-//       FD_SET(audioUnicastSocket, &readfds);
-//       max_fd = max(max_fd, audioUnicastSocket);
-//     }
-
-//     struct timeval tv;
-//     tv.tv_sec = 0;
-//     tv.tv_usec = 10000; // 10ms timeout
-
-//     int ready = select(max_fd + 1, &readfds, NULL, NULL, &tv);
-//     if (ready < 0) {
-//       RTSP_LOGE(LOG_TAG, "select() failed: %d", errno);
-//       vTaskDelay(10 / portTICK_PERIOD_MS);
-//       continue;
-//     }
-//     if (ready == 0) {
-//       vTaskDelay(1 / portTICK_PERIOD_MS);
-//       continue;
-//     }
-
-//     // Check which socket has data
-//     int len = -1;
-//     int activeSocket = -1;
-//     if (audioIUnicastSocket >= 0 && FD_ISSET(audioIUnicastSocket, &readfds)) {
-//       len = recvfrom(audioIUnicastSocket, rtpBuffer, 1500, 0, (struct sockaddr*)&srcAddr, &addrLen);
-//       activeSocket = audioIUnicastSocket;
-//     } else if (audioUnicastSocket >= 0 && FD_ISSET(audioUnicastSocket, &readfds)) {
-//       len = recvfrom(audioUnicastSocket, rtpBuffer, 1500, 0, (struct sockaddr*)&srcAddr, &addrLen);
-//       activeSocket = audioUnicastSocket;
-//     }
-
-//     if (len > 0) {
-//       RTPPacket rtp;
-//       if (parseRTPPacket(rtpBuffer, len, rtp)) {
-//         size_t numSamples = (audioInCodec == L16) ? rtp.payloadLen / 2 : rtp.payloadLen;
-
-//         // Decode based on input codec
-//         if (audioInCodec == G711_ULAW || audioInCodec == G711_ALAW) {
-//           decodeG711(rtp.payload, pcm, numSamples, audioInCodec == G711_ULAW);
-//         } else { // L16
-//           for (size_t i = 0; i < numSamples; i++) {
-//             pcm[i] = (int16_t)((rtp.payload[i * 2] << 8) | rtp.payload[i * 2 + 1]);
-//           }
-//         }
-
-// #ifdef USE_SPEEXDSP
-//         audioProcessor.preprocessSpeakerAudio(pcm);
-//         audioProcessor.writeBuffer(pcm, numSamples);
-// #endif
-
-//         // Send to callback
-//         if (audioReceiveCallback) {
-//           RTSP_LOGD(LOG_TAG, "Received audio from port %d", activeSocket == audioIUnicastSocket ? rtpAudioIPort : rtpAudioPort);
-//           sendReceivedAudioToMain((uint8_t*)pcm, numSamples * sizeof(int16_t), audioReceiveCallback);
-//         }
-//       } else {
-//         RTSP_LOGE(LOG_TAG, "Failed to parse RTP packet from port %d", 
-//                   activeSocket == audioIUnicastSocket ? rtpAudioIPort : rtpAudioPort);
-//       }
-//     } else if (len < 0) {
-//       RTSP_LOGE(LOG_TAG, "recvfrom failed on port %d: %d", 
-//                 activeSocket == audioIUnicastSocket ? rtpAudioIPort : rtpAudioPort, errno);
-//     }
-//     vTaskDelay(1 / portTICK_PERIOD_MS);
-//   }
-// }
-
 void RTSPServer::setAudioReceiveCallback(void (*callback)(const uint8_t*, size_t)) {
     this->audioReceiveCallback = callback;
 }
@@ -948,7 +665,7 @@ void RTSPServer::sendReceivedAudioToMain(const uint8_t* l16Data, size_t len, voi
     }
 }
 
-// G.711 Codec (unchanged)
+// G.711 Codec
 void RTSPServer::decodeG711(uint8_t* inG711, int16_t* out, int numSamples, bool ulaw) {
   for (int i = 0; i < numSamples; i++) {
       out[i] = ulaw ? ulaw2linear(inG711[i]) : alaw2linear(inG711[i]);
@@ -961,7 +678,7 @@ void RTSPServer::encodeG711(int16_t* in, uint8_t* outG711, int numSamples, bool 
   }
 }
 
-// RTP Parsing (unchanged)
+// RTP Parsing
 bool RTSPServer::parseRTPPacket(uint8_t* packet, int packetLen, RTPPacket& rtp) {
   if (!packet || packetLen < 12) return false;
 

@@ -67,7 +67,7 @@ RTSPServer rtspServer;
 #endif
 
 // Define HAVE_AUDIO to include audio-related code
-#define HAVE_AUDIO // Comment out if don't have audio
+//#define HAVE_AUDIO // Comment out if don't have audio
 
 #ifdef HAVE_AUDIO
 #include <ESP_I2S.h>
@@ -75,17 +75,27 @@ RTSPServer rtspServer;
 I2SClass I2S;
 
 // I2S pins configuration
-#define I2S_SCK          3   // Serial Clock (SCK) or Bit Clock (BCLK)
-#define I2S_WS           46  // Word Select (WS) or Left Right Clock (LRCLK)
-#define I2S_SDI          45  // Serial Data In (Mic)
-#define I2S_SD0          0   // Serial Data Out (Amp)
-
-// Audio variables
-int sampleRate = 16000;      // Sample rate in Hz
-const size_t sampleBytes = 1024; // Sample buffer size (in bytes)
-int16_t* sampleBuffer = NULL;  // Pointer to the sample buffer
+#ifndef I2S_SCK
+#define I2S_SCK 3   // Serial Clock (SCK) or Bit Clock (BCLK)
+#endif
+#ifndef I2S_WS
+#define I2S_WS  46  // Word Select (WS) or Left Right Clock (LRCLK)
+#endif
+#ifndef I2S_SDI
+#define I2S_SDI 45  // Serial Data In (Mic)
+#endif
+#ifndef I2S_SDO
+#define I2S_SDO -1  // Serial Data Out (Amp), optional, set to -1 if no speaker
 #endif
 
+// Audio parameters
+static const int sampleRate = 8000;          // 8 kHz for G.711
+static const size_t sampleCount = 160;       // 20 ms at 8 kHz
+static const size_t sampleBytes = sampleCount * sizeof(int16_t); // 320 bytes
+static const size_t g711Bytes = sampleCount; // 160 bytes
+static int16_t* sampleBuffer = NULL;         // PCM buffer for I2S
+static uint8_t* g711Buffer = NULL;           // G.711 buffer for RTSP
+#endif
 
 // Variable to hold quality for RTSP frame
 int quality;
@@ -94,10 +104,9 @@ TaskHandle_t videoTaskHandle = NULL;
 TaskHandle_t audioTaskHandle = NULL; 
 TaskHandle_t subtitlesTaskHandle = NULL;
 
-
 /** 
  * @brief Sets up the camera with the specified configuration. 
-*/
+ */
 void setupCamera() {
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -183,7 +192,7 @@ void setupCamera() {
 
 /** 
  * @brief Retrieves the current frame quality from the camera. 
-*/
+ */
 void getFrameQuality() { 
   sensor_t * s = esp_camera_sensor_get(); 
   quality = s->status.quality; 
@@ -192,17 +201,39 @@ void getFrameQuality() {
 
 #ifdef HAVE_AUDIO
 /** 
- * @brief Sets up the I2S microphone. 
+ * @brief Sets up the I2S microphone and speaker (if I2S_SDO is defined). 
  * 
  * @return true if setup is successful, false otherwise. 
  */
 static bool setupMic() {
   bool res;
-  // I2S mic and I2S amp can share same I2S channel
-  I2S.setPins(I2S_SCK, I2S_WS, -1, I2S_SDI, -1); // BCLK/SCK, LRCLK/WS, SDOUT, SDIN, MCLK
-  res = I2S.begin(I2S_MODE_STD, sampleRate, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO, I2S_STD_SLOT_LEFT);
+  // Configure I2S pins, SDO is optional (-1 if no speaker)
+  I2S.setPins(I2S_SCK, I2S_WS, I2S_SDO, I2S_SDI, -1);  // No MCLK
+
+  // Initialize I2S: 8 kHz, 16-bit, mono
+  res = I2S.begin(I2S_MODE_STD, sampleRate, I2S_DATA_BIT_WIDTH_16BIT, 
+                  I2S_SLOT_MODE_MONO, I2S_STD_SLOT_LEFT);
+  if (!res) {
+    Serial.println("I2S initialization failed");
+    return false;
+  }
+
+  // Allocate buffers
+#if defined(USE_PSRAM) || defined(BOARD_HAS_PSRAM) // Check for PSRAM
+  if (sampleBuffer == NULL) sampleBuffer = (int16_t*)ps_malloc(sampleBytes);
+  if (g711Buffer == NULL) g711Buffer = (uint8_t*)ps_malloc(g711Bytes);
+#else
   if (sampleBuffer == NULL) sampleBuffer = (int16_t*)malloc(sampleBytes);
-  return res;
+  if (g711Buffer == NULL) g711Buffer = (uint8_t*)malloc(g711Bytes);
+#endif
+
+  if (sampleBuffer == NULL || g711Buffer == NULL) {
+    Serial.println("Buffer allocation failed");
+    return false;
+  }
+
+  Serial.printf("Free heap after audio setup: %u bytes\n", ESP.getFreeHeap());
+  return true;
 }
 
 /** 
@@ -216,30 +247,47 @@ static size_t micInput() {
   bytesRead = I2S.readBytes((char*)sampleBuffer, sampleBytes);
   return bytesRead;
 }
+
 /**
  * @brief Task to send audio data via RTP. 
  */
 void sendAudio(void* pvParameters) { 
+  Serial.printf("[Audio] Started on Core %d\n", xPortGetCoreID());
   while (true) { 
-    size_t bytesRead = 0;
-    if(rtspServer.readyToSendAudio()) {
-      bytesRead = micInput();
-      if (bytesRead) rtspServer.sendRTSPAudio(sampleBuffer, bytesRead);
-      else Serial.println("No audio Recieved");
+    if (rtspServer.readyToSendAudio()) {
+      size_t bytesRead = micInput();
+      if (bytesRead) {
+        rtspServer.sendRTSPAudio(sampleBuffer, bytesRead);
+      }
     }
-    vTaskDelay(pdMS_TO_TICKS(1)); // Delay for 1 second 
+    vTaskDelay(pdMS_TO_TICKS(1));
   }
 }
 
+/**
+ * @brief Callback to handle received audio from client.
+ * If I2S_SDO is -1, no speaker output is attempted.
+ */
+void receivedAudio(const uint8_t* l16Data, size_t len) {
+  if (I2S_SDO != -1) { // Only write to speaker if I2S_SDO is defined
+    size_t bytesWritten = I2S.write(l16Data, len);
+    if (bytesWritten != len) {
+      Serial.printf("I2S write failed: Wrote %d of %d bytes\n", bytesWritten, len);
+    }
+  } else {
+    Serial.printf("Received audio (%d bytes), no speaker configured\n", len);
+  }
+}
 #endif
 
 /** 
  * @brief Task to send jpeg frames via RTP. 
-*/
+ */
 void sendVideo(void* pvParameters) { 
+  Serial.printf("[Video] Started on Core %d\n", xPortGetCoreID());
   while (true) { 
     // Send frame via RTP
-    if(rtspServer.readyToSendFrame()) {
+    if (rtspServer.readyToSendFrame()) {
       camera_fb_t* fb = esp_camera_fb_get();
       rtspServer.sendRTSPFrame(fb->buf, fb->len, quality, fb->width, fb->height);
       esp_camera_fb_return(fb);
@@ -254,18 +302,18 @@ void sendVideo(void* pvParameters) {
 void sendSubtitles(void* pvParameters) {
   char data[100];
   while (true) {
-    if(rtspServer.readyToSendSubtitles()) {
+    if (rtspServer.readyToSendSubtitles()) {
       size_t len = snprintf(data, sizeof(data), "FPS: %lu", rtspServer.rtpFps);
       rtspServer.sendRTSPSubtitles(data, len);
     }
-  vTaskDelay(1000 / portTICK_PERIOD_MS); // Delay for 1 second has to be 1 second
+    vTaskDelay(1000 / portTICK_PERIOD_MS); // Delay for 1 second
   }
 }
 
 // Timer callback function 
 void onSubtitles(void* arg) { 
   char data[100];
-  if(rtspServer.readyToSendSubtitles()) {
+  if (rtspServer.readyToSendSubtitles()) {
     size_t len = snprintf(data, sizeof(data), "FPS: %lu", rtspServer.rtpFps);
     rtspServer.sendRTSPSubtitles(data, len);
   }
@@ -338,6 +386,12 @@ void printDeviceInfo() {
   Serial.printf("Subtitles Port: %d\n", rtspServer.rtpSubtitlesPort);
   Serial.printf("RTP IP: %s\n", rtspServer.rtpIp.toString().c_str());
   Serial.printf("RTP TTL: %d\n", rtspServer.rtpTTL);
+#ifdef HAVE_AUDIO
+  Serial.printf("Audio Out Codec: %s\n", rtspServer.audioOutCodec == RTSPServer::G711_ULAW ? "G711_ULAW" : 
+                                    rtspServer.audioOutCodec == RTSPServer::G711_ALAW ? "G711_ALAW" : "L16");
+  Serial.printf("Audio In Codec: %s\n", rtspServer.audioInCodec == RTSPServer::G711_ULAW ? "G711_ULAW" : 
+                                    rtspServer.audioInCodec == RTSPServer::G711_ALAW ? "G711_ALAW" : "L16");
+#endif
   Serial.println("");
   Serial.printf("RTSP Address: rtsp://%s:%d\n", WiFi.localIP().toString().c_str(), rtspServer.rtspPort);
   Serial.println("==============================");
@@ -361,47 +415,59 @@ void setup() {
   getFrameQuality();
 
 #ifdef HAVE_AUDIO
-  // Setup microphone
+  // Setup microphone and speaker (if I2S_SDO is defined)
   if (setupMic()) {
-    Serial.println("Microphone Setup Complete");
-    // Create tasks for sending audio
-    xTaskCreate(sendAudio, "Audio", 8192, NULL, 8, &audioTaskHandle);
+    Serial.println("Microphone and Speaker Setup Complete");
+    // Create task for sending audio, pinned to Core 1
+    xTaskCreatePinnedToCore(sendAudio, "Audio", 8192, NULL, 8, &audioTaskHandle, 1);
+    // Register callback for receiving audio
+    rtspServer.setAudioReceiveCallback(receivedAudio);
   } else {
-    Serial.println("Mic Setup Failed!");
+    Serial.println("Mic and Speaker Setup Failed!");
   }
+
+#ifdef USE_SPEEXDSP
+  // Configure audio processing settings via audioProcessor
+  rtspServer.audioProcessor.enableAEC(true); // Enable to remove echo from mic input
+  rtspServer.audioProcessor.enableMicNoiseSuppression(false); // Disable noise suppression for mic
+  rtspServer.audioProcessor.setMicNoiseSuppressionLevel(-25); // Set noise reduction strength
+  rtspServer.audioProcessor.enableMicAGC(true, 0.8f); // Enable Automatic Gain Control
+  rtspServer.audioProcessor.enableMicVAD(false); // Disable Voice Activity Detection
+  rtspServer.audioProcessor.setMicVADThreshold(80); // Set VAD sensitivity
+  rtspServer.audioProcessor.enableSpeakerNoiseSuppression(false); // Disable noise suppression for speaker
+  rtspServer.audioProcessor.setSpeakerNoiseSuppressionLevel(-15); // Set speaker NS strength
+  rtspServer.audioProcessor.enableSpeakerAGC(true, 0.9f); // Enable AGC for speaker
+#endif
 #endif
 
-  // Create tasks for sending video, and subtitles
-  xTaskCreate(sendVideo, "Video", 8192, NULL, 9, &videoTaskHandle);
-  
-  // You can use a task to send subtitles every second
-  //xTaskCreate(sendSubtitles, "Subtitles", 2560, NULL, 7, &subtitlesTaskHandle);
+  // Create task for sending video, pinned to Core 0
+  xTaskCreatePinnedToCore(sendVideo, "Video", 8192, NULL, 9, &videoTaskHandle, 0);
 
-  // Or a callback to send the subtitles with the callback function 
+  // Use timer for subtitles
   rtspServer.startSubtitlesTimer(onSubtitles); // 1-second period
 
-  rtspServer.maxRTSPClients = 5; // Set the maximum number of RTSP Multicast clients else enable OVERRIDE_RTSP_SINGLE_CLIENT_MODE to allow multiple clients for all transports eg. TCP, UDP, Multicast
-
+  rtspServer.maxRTSPClients = 5; // Set max RTSP clients
   rtspServer.setCredentials(RTSP_USER, RTSP_PASSWORD); // Set RTSP authentication
-
-  rtspServer.setClientActivityCallback(onClientActivity); // Register the client activity callback
+  rtspServer.setClientActivityCallback(onClientActivity); // Register client activity callback
 
   // Initialize the RTSP server
   /**
    * @brief Initializes the RTSP server with the specified configuration.
    * 
    * This method can be called with specific parameters, or the parameters
-   * can be set directly in the RTSPServer instance before calling begin().
+   * can be set directly in the RTSPServer instance before calling init().
    * If any parameter is not explicitly set, the method uses default values.
    * 
    * @param transport The transport type. Default is VIDEO_AND_SUBTITLES. Options are (VIDEO_ONLY, AUDIO_ONLY, VIDEO_AND_AUDIO, VIDEO_AND_SUBTITLES, AUDIO_AND_SUBTITLES, VIDEO_AUDIO_SUBTITLES).
    * @param rtspPort The RTSP port to use. Default is 554.
-   * @param sampleRate The sample rate for audio streaming. Default is 0 must pass or set if using audio.
-   * @param port1 The first port (used for video, audio or subtitles depending on transport). Default is 5430.
+   * @param sampleRate The sample rate for audio streaming. Default is 0, must be set if using audio.
+   * @param port1 The first port (used for video, audio, or subtitles depending on transport). Default is 5430.
    * @param port2 The second port (used for audio or subtitles depending on transport). Default is 5432.
    * @param port3 The third port (used for subtitles). Default is 5434.
    * @param rtpIp The IP address for RTP multicast streaming. Default is IPAddress(239, 255, 0, 1).
    * @param rtpTTL The TTL value for RTP multicast packets. Default is 64.
+   * @param outCodec The codec for audio streamed from ESP32 (mic) to client. Default is L16. Options are (G711_ULAW, G711_ALAW, L16).
+   * @param inCodec The codec for audio received from client to ESP32 (speaker). Default is G711_ULAW. Options are (G711_ULAW, G711_ALAW, L16).
    * @return true if initialization is successful, false otherwise.
    *
    * Example usage:
@@ -414,13 +480,15 @@ void setup() {
    * 
    * // Option 2: Set variables directly and then call init
    * rtspServer.transport = RTSPServer::VIDEO_AUDIO_SUBTITLES; 
-   * rtspServer.sampleRate = 48000; 
+   * rtspServer.sampleRate = 8000; 
    * rtspServer.rtspPort = 8554; 
    * rtspServer.rtpIp = IPAddress(239, 255, 0, 1); 
    * rtspServer.rtpTTL = 64; 
    * rtspServer.rtpVideoPort = 5004; 
    * rtspServer.rtpAudioPort = 5006; 
    * rtspServer.rtpSubtitlesPort = 5008;
+   * rtspServer.audioOutCodec = RTSPServer::G711_ULAW; // Mic to client
+   * rtspServer.audioInCodec = RTSPServer::G711_ULAW;  // Client to speaker
    * if (rtspServer.init()) { 
    *   Serial.println("RTSP server started successfully"); 
    * } else { 
@@ -428,24 +496,25 @@ void setup() {
    * }
    * 
    * // Option 3: Set variables in the init call
-   * if (rtspServer.init(RTSPServer::VIDEO_AUDIO_SUBTITLES, 554, sampleRate)) { 
+   * if (rtspServer.init(RTSPServer::VIDEO_AUDIO_SUBTITLES, 554, 8000, 5004, 5006, 5008, 
+   *                     IPAddress(239, 255, 0, 1), 64, RTSPServer::G711_ULAW, RTSPServer::G711_ULAW)) { 
    *   Serial.println("RTSP server started successfully"); 
    * } else { 
    *   Serial.println("Failed to start RTSP server"); 
    * }
    *
-   * Also have deinit() and reinit() for either deinitialise or reinitialise the rtsp server
-   * use reinit() if changing settings
+   * Also have deinit() and reinit() for either deinitialize or reinitialize the RTSP server.
+   * Use reinit() if changing settings.
    */
-
 #ifdef HAVE_AUDIO
-  if (rtspServer.init(RTSPServer::VIDEO_AUDIO_SUBTITLES, 554, sampleRate)) {
+  if (rtspServer.init(RTSPServer::VIDEO_AUDIO_SUBTITLES, 554, sampleRate, 5430, 5432, 5434, 
+                      IPAddress(239, 255, 0, 1), 64, RTSPServer::L16, RTSPServer::G711_ULAW)) {
     Serial.printf("RTSP server started successfully, Connect to rtsp://%s:554/\n", WiFi.localIP().toString().c_str());
   } else { 
     Serial.println("Failed to start RTSP server"); 
   }
 #else
-  if (rtspServer.init()) { 
+  if (rtspServer.init(RTSPServer::VIDEO_AND_SUBTITLES, 554)) { 
     Serial.printf("RTSP server started successfully using default values, Connect to rtsp://%s:554/\n", WiFi.localIP().toString().c_str());
   } else { 
     Serial.println("Failed to start RTSP server"); 
@@ -454,7 +523,7 @@ void setup() {
 }
 
 void loop() {
-  printDeviceInfo(); // just print out info about device
+  printDeviceInfo(); // Print device info
   delay(1000);
-  vTaskDelete(NULL); // free 8k ram and delete the loop
+  vTaskDelete(NULL); // Free 8k RAM and delete the loop
 }
