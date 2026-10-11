@@ -23,10 +23,12 @@ void RTSPServer::handleOptions(char* request, RTSP_Session& session) {
   char* urlStart = strstr(request, "rtsp://");
   if (urlStart) {
     char* pathStart = strchr(urlStart + 7, '/');
-    char* pathEnd = strchr(pathStart, ' ');
-    if (pathStart && pathEnd) {
-      *pathEnd = 0; // Null-terminate the path
-      // Path can be processed here if needed
+    if (pathStart) {  // FIX: check for NULL before dereferencing
+      char* pathEnd = strchr(pathStart, ' ');
+      if (pathEnd) {  // FIX: moved null-check inside the pathStart guard
+        *pathEnd = 0; // Null-terminate the path
+        // Path can be processed here if needed
+      }
     }
   }
   
@@ -342,9 +344,17 @@ void RTSPServer::handleTeardown(RTSP_Session& session) {
  * @return true if the request was handled successfully, false otherwise.
  */
 bool RTSPServer::handleRTSPRequest(RTSP_Session& session) {
-  char *buffer = (char *)ps_malloc(RTSP_BUFFER_SIZE);
+  // FIX #2: Use malloc with psramFound() fallback instead of ps_malloc unconditionally.
+  // ps_malloc fails on ESP32-WROOM-32 which lacks PSRAM, causing the RTSP server
+  // to silently drop all connections.
+  char *buffer;
+  if (psramFound()) {
+    buffer = (char *)ps_malloc(RTSP_BUFFER_SIZE);
+  } else {
+    buffer = (char *)malloc(RTSP_BUFFER_SIZE);
+  }
   if (!buffer) {
-    RTSP_LOGE(LOG_TAG, "Failed to allocate buffer with ps_malloc");
+    RTSP_LOGE(LOG_TAG, "Failed to allocate request buffer");
     return false;
   }
 
@@ -451,8 +461,11 @@ bool RTSPServer::handleRTSPRequest(RTSP_Session& session) {
     session.sessionID = sessionID;
   }
 
-  // Authentication check
-  if (authEnabled) {
+  // Authentication check - skip for already-established sessions (FIX #3)
+  // RTSP clients like ffplay/vlc authenticate once during OPTIONS/DESCRIBE
+  // and expect subsequent requests (SETUP, PLAY) within the same session to
+  // not require re-authentication. This is standard RTSP session behavior.
+  if (authEnabled && session.sessionID == 0) {
     char* authHeader = strstr(buffer, "Authorization: Basic ");
     if (!authHeader) {
       sendUnauthorizedResponse(session);
